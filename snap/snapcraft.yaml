@@ -1,0 +1,57 @@
+name: scrivano
+version: '1.0.0'
+summary: Desktop system audio recorder and transcriber
+description: |
+  Scrivano is a Rust desktop application that records system audio on Linux 
+  (via PulseAudio/PipeWire) and transcribes it locally using Whisper. 
+  The UI is built with egui/eframe.
+  
+  Features:
+  - Native system audio recording (PulseAudio/PipeWire loopback)
+  - Local transcription with Whisper (GGML models)
+  - Audio playback support
+  - Ollama integration for transcript improvement and summaries
+  - Export to TXT, Markdown, JSON, SRT, WebVTT
+  - Recording history with SQLite
+  - System tray icon support
+  - Dark theme UI
+
+developer: Gustavo Gutiérrez
+license: MIT
+license-url: https://github.com/GustavoGutierrez/scrivano/blob/main/LICENSE
+homepage: https://github.com/GustavoGutierrez/scrivano
+source: https://github.com/GustavoGutierrez/scrivano
+issues: https://github.com/GustavoGutierrez/scrivano/issues
+
+grade: stable
+confinement: classic
+base: core22
+
+parts:
+  scrivano:
+    plugin: dump
+    source: bin/
+    source-type: local
+    stage:
+      - scrivano
+    prime:
+      - scrivano
+
+apps:
+  scrivano:
+    command: scrivano
+    completer: bash-completion.bash
+    environment:
+      PULSE_SERVER: "$XDG_RUNTIME_DIR/pulse/native"
+    plugs:
+      - audio-playback
+      - network
+      - network-client
+      - home
+      - removable-media
+    slots:
+      - audio-playback
+
+architectures:
+  - arm64
+  - amd64

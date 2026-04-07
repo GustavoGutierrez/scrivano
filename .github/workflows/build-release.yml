@@ -103,21 +103,33 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create Release ZIP
+      - name: Rename binaries for release
         shell: bash
         run: |
           cd artifacts
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG_NAME="${{ github.event.release.tag_name }}"
-          else
-            TAG_NAME="${{ github.ref_name }}"
+          # Linux
+          if [ -f "scrivano-x86_64-unknown-linux-gnu/scrivano" ]; then
+            cp scrivano-x86_64-unknown-linux-gnu/scrivano scrivano-linux-x86_64
           fi
-          zip -r ${TAG_NAME}-binaries.zip ./
+          # macOS
+          if [ -f "scrivano-aarch64-apple-darwin/scrivano" ]; then
+            cp scrivano-aarch64-apple-darwin/scrivano scrivano-macos-arm64
+          fi
 
-      - name: Upload to Release
+      - name: Upload Linux binary to Release
+        if: success()
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*.zip
+          files: artifacts/scrivano-linux-x86_64
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload macOS binary to Release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/scrivano-macos-arm64
           tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
