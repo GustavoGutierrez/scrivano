@@ -1,7 +1,7 @@
-# Makefile — MeetWhisperer
+# Makefile — Scrivano
 # Targets: build, release, deb, dist, install, uninstall, clean
 
-PKG_NAME    := meet-whisperer
+PKG_NAME    := scrivano
 VERSION     := 0.1.0
 ARCH        := amd64
 BINARY      := target/release/$(PKG_NAME)
@@ -57,7 +57,7 @@ install: release ## Instalar en el sistema actual (requiere sudo)
 		[ -f "$$src" ] && sudo cp "$$src" "$$dst" || true; \
 	done
 	@# .desktop
-	@printf '[Desktop Entry]\nType=Application\nName=MeetWhisperer\nExec=$(INSTALL_DIR)/run.sh\nIcon=$(PKG_NAME)\nTerminal=false\nCategories=AudioVideo;Utility;\n' \
+	@printf '[Desktop Entry]\nType=Application\nName=Scrivano\nExec=$(INSTALL_DIR)/run.sh\nIcon=$(PKG_NAME)\nTerminal=false\nCategories=AudioVideo;Utility;\n' \
 		| sudo tee /usr/share/applications/$(PKG_NAME).desktop > /dev/null
 	sudo update-icon-caches /usr/share/icons/hicolor 2>/dev/null || true
 	sudo update-desktop-database /usr/share/applications 2>/dev/null || true

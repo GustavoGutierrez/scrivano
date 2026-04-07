@@ -1,4 +1,4 @@
-//! Audio capture module for MeetWhisperer.
+//! Audio capture module for Scrivano.
 //!
 //! Captures audio from any PulseAudio source (microphone or desktop monitor)
 //! using libpulse-binding directly.  Frames arrive as S32LE mono at 44 100 Hz
@@ -20,6 +20,25 @@ use std::{
     thread,
     time::Duration,
 };
+
+/// Audio source type for recording
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioSource {
+    /// System audio (desktop capture via loopback)
+    System,
+    /// Microphone input
+    Microphone,
+}
+
+impl AudioSource {
+    /// Get the PulseAudio source name suffix based on source type
+    pub fn pa_suffix(&self) -> &'static str {
+        match self {
+            AudioSource::System => ".monitor",
+            AudioSource::Microphone => "",
+        }
+    }
+}
 
 /// Sample rate at which PulseAudio delivers frames (S32LE mono).
 const CAPTURE_RATE: u32 = 44_100;
@@ -75,7 +94,7 @@ pub fn spawn_system_audio_recorder(
             }
         };
 
-        let mut context = match Context::new(&mainloop, "MeetWhisperer") {
+        let mut context = match Context::new(&mainloop, "Scrivano") {
             Some(c) => c,
             None => {
                 eprintln!("[audio] Failed to create PulseAudio context");
@@ -123,7 +142,7 @@ pub fn spawn_system_audio_recorder(
         };
         assert!(spec.is_valid());
 
-        let mut stream = match Stream::new(&mut context, "MeetWhisperer-capture", &spec, None) {
+        let mut stream = match Stream::new(&mut context, "Scrivano-capture", &spec, None) {
             Some(s) => s,
             None => {
                 eprintln!("[audio] Failed to create PulseAudio stream");
@@ -230,7 +249,7 @@ pub fn spawn_system_audio_recorder(
 /// # Example
 /// ```rust
 /// use std::sync::{Arc, Mutex};
-/// use meet_whisperer::audio::clear_buffer;
+/// use scrivano::audio::clear_buffer;
 ///
 /// let buffer = Arc::new(Mutex::new(vec![1.0, 2.0, 3.0]));
 /// clear_buffer(buffer.clone());
@@ -245,7 +264,7 @@ pub fn clear_buffer(buffer: Arc<Mutex<Vec<f32>>>) {
 /// # Example
 /// ```rust
 /// use std::sync::{Arc, Mutex};
-/// use meet_whisperer::audio::get_buffer_data;
+/// use scrivano::audio::get_buffer_data;
 ///
 /// let buffer = Arc::new(Mutex::new(vec![0.1, 0.2, 0.3]));
 /// let data = get_buffer_data(buffer.clone());
@@ -260,13 +279,45 @@ pub fn get_buffer_data(buffer: Arc<Mutex<Vec<f32>>>) -> Vec<f32> {
 /// # Example
 /// ```rust
 /// use std::sync::{Arc, Mutex};
-/// use meet_whisperer::audio::get_buffer_size;
+/// use scrivano::audio::get_buffer_size;
 ///
 /// let buffer = Arc::new(Mutex::new(vec![1.0; 100]));
 /// assert_eq!(get_buffer_size(buffer.clone()), 100);
 /// ```
 pub fn get_buffer_size(buffer: Arc<Mutex<Vec<f32>>>) -> usize {
     buffer.lock().unwrap().len()
+}
+
+/// Calculate RMS (Root Mean Square) audio level from samples
+/// Returns value between 0.0 and 1.0
+pub fn calculate_rms_level(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+
+    let sum_squares: f32 = samples.iter().map(|&s| s * s).sum();
+    let rms = (sum_squares / samples.len() as f32).sqrt();
+
+    // Normalize to 0-1 range (assuming input is -1.0 to 1.0)
+    rms.min(1.0)
+}
+
+/// Calculate peak audio level from samples
+/// Returns value between 0.0 and 1.0
+pub fn calculate_peak_level(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+
+    let peak = samples.iter().map(|&s| s.abs()).fold(0.0_f32, f32::max);
+    peak.min(1.0)
+}
+
+/// Get audio level as percentage (0-100)
+pub fn get_audio_level_percentage(samples: &[f32]) -> f32 {
+    let rms = calculate_rms_level(samples);
+    // Convert to percentage with some scaling for better visualization
+    (rms * 100.0).min(100.0)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

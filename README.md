@@ -1,250 +1,370 @@
-# MeetWhisperer
+<p align="center">
+  <img src="assets/favicons/favicon-512x512.png" alt="Scrivano Logo" width="128" height="128">
+</p>
 
-MeetWhisperer es una aplicación de escritorio escrita en Rust que graba el **audio del sistema en Linux** (por ejemplo, llamadas de Google Meet, videollamadas, conferencias online) y lo transcribe automáticamente usando **Whisper** en modo local, sin enviar tu audio a la nube.
+# Scrivano
 
-La app captura directamente la salida de audio del sistema mediante PulseAudio/PipeWire, procesa el audio con modelos GGML de Whisper (`ggml-small.bin` o `ggml-medium.bin`) y muestra la transcripción en una interfaz sencilla construida con `egui`. Además, se integra en la bandeja del sistema para poder iniciar y detener grabaciones de forma rápida y discreta mientras trabajas. [web:24][web:65][web:107]
+<p align="center">
+  <strong>Scrivano</strong> es una aplicación de escritorio escrita en Rust que graba el **audio del sistema en Linux** (por ejemplo, llamadas de Google Meet, videollamadas, conferencias online) y lo transcribe automáticamente usando **Whisper** en modo local, sin enviar tu audio a la nube.
 
----
-
-## Características
-
-- Grabación del **audio del sistema** (salida por defecto de PulseAudio/PipeWire), ideal para:
-  - Google Meet, Zoom, Teams, Jitsi.
-  - Video‑clases, webinars, conferencias online.
-- Transcripción local con **Whisper** usando modelos GGML (`ggml-small.bin` / `ggml-medium.bin`). [web:63][web:65]
-- Soporte para **español e inglés mezclados** en la misma conversación (Whisper en modo `language=auto`). [web:75][web:79]
-- Interfaz gráfica minimalista con `egui`:
-  - Botón “Iniciar grabación”.
-  - Botón “Detener grabación y transcribir”.
-  - Área de texto con la transcripción resultante.
-- Integración con la **bandeja del sistema** mediante `tray-icon`:
-  - Icono en la barra de estado.
-  - Posibilidad de mantener la ventana minimizada y controlar la grabación desde la bandeja. [web:29][web:38]
-- Funciona **totalmente offline** una vez descargado el modelo de Whisper. [web:65]
+La app captura directamente la salida de audio del sistema mediante PulseAudio/PipeWire, procesa el audio con modelos GGML de Whisper (`ggml-small.bin` o `ggml-medium.bin`) y muestra la transcripción en una interfaz sencilla construida con `egui`. Además, se integra en la bandeja del sistema para poder iniciar y detener grabaciones de forma rápida y discreta mientras trabajas.
 
 ---
 
-## Requisitos
+## Estado del Proyecto
 
-### Sistema operativo
+| Componente | Estado |
+|------------|--------|
+| Compilación | ✅ Estable |
+| Tests | 40 tests (27 passed, 13 ignored) |
+| Modelo Whisper | ✅ Carga correctamente (189.49 MB) |
+| Interfaz GUI | ✅ Implementada con UX mejorada |
+| Exportación | ✅ TXT, MD, JSON, SRT, VTT |
+| Highlights | ✅ Botón durante grabación |
+| Resúmenes | ✅ Ejecutivo, Tareas, Decisiones |
+| Configuración Ollama | ✅ Host/Port personalizables |
+| Ollama (opcional) | ✅ Soportado con thinking cleanup |
 
-- Linux con:
-  - **PulseAudio o PipeWire** para la captura de audio del sistema. [web:107][web:110]
-
-### Hardware recomendado
-
-- CPU x86_64 relativamente reciente.
-- Mínimo **8 GB de RAM** (recomendado si usas `ggml-medium.bin`). [web:42][web:46]
-- Opcional: GPU con 8 GB de VRAM si quieres usar versiones aceleradas de Whisper (por ejemplo, `faster-whisper` fuera de este binario). [web:52][web:88]
+### Novedades Recientes
+- **✨ UX Rediseñada**: Pantalla de configuración con tarjetas, padding y mejor organización
+- **🔧 Configuración Ollama**: Ahora puedes configurar host y puerto personalizados
+- **📥 Exportar desde Historial**: Botones de exportar y generar resumen en grabaciones anteriores
+- **🎨 Mejor diseño visual**: Secciones con fondo, bordes redondeados y espaciado apropiado
 
 ---
 
-## Modelos de Whisper soportados
+## Interfaz de Usuario
 
-MeetWhisperer está pensado para usar los modelos GGML de `whisper.cpp`. [web:65][web:109]
+### Pantalla Principal (Grabación)
 
-Modelos recomendados:
+```
+┌─────────────────────────────────────────────────────────────┐
+│  [Grabación] [Configuración] [Acerca de]                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│              ⏺  Iniciar grabación                          │
+│                                                             │
+│     ~~~~~~~~ Waveform Visualizer ~~~~~~~~                   │
+│                                                             │
+├─────────────────────────────────────────────────────────────┤
+│  Transcripción:                                             │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │ Texto transcrito aparece aquí...                        ││
+│  └─────────────────────────────────────────────────────────┘│
+├─────────────────────────────────────────────────────────────┤
+│  📥 Exportar: [TXT] [Markdown] [JSON] [SRT] [VTT]          │
+├─────────────────────────────────────────────────────────────┤
+│  ✨ Generar Resumen: [📋 Ejecutivo] [✅ Tareas] [📝 Decisiones]│
+├─────────────────────────────────────────────────────────────┤
+│  ▼ Grabaciones recientes (12)                              │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │ 📄 grabacion_001.txt                                    ││
+│  │ 📅 2024-01-15  ⏱ 15:30  ✨ qwen3.5:4b                  ││
+│  │ ─────────────────────────────────────────────────────   ││
+│  │ [📥 Exportar] [✨ Resumen] [📄 Abrir]                   ││
+│  └─────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+```
 
-- **`ggml-small.bin` (multilingüe)**  
-  - Buena calidad en español e inglés.  
-  - Consumo de memoria moderado. [web:46][web:78]
+### Durante Grabación Activa
 
-- **`ggml-medium.bin` (multilingüe)**  
-  - Mejor precisión que `small`, especialmente en frases largas y ruido moderado.  
-  - Recomendado si tienes ≥ 8 GB de RAM disponible. [web:46][web:78]
+```
+┌─────────────────────────────────────────────────────────────┐
+│  [Grabación] [Configuración] [Acerca de]                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│              ⏹  Detener     |     ⭐ Highlight             │
+│                                                             │
+│     ● REC   00:05:23    (2 highlights marcados)            │
+│                                                             │
+│     ~~~~~~~~ waveform ~~~~~~~~                              │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
 
-### Descarga de modelos
+### Pantalla de Configuración (Rediseñada)
 
-Puedes descargar los modelos con el script oficial de `whisper.cpp`: [web:109]
+```
+┌─────────────────────────────────────────────────────────────┐
+│  [Grabación] [Configuración] [Acerca de]                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  🎙  Modelo de transcripción                               │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │ Selecciona un modelo Whisper:                           ││
+│  │ [ggml-small-q5_1.bin                    ▼]             ││
+│  └─────────────────────────────────────────────────────────┘│
+│                                                             │
+│  🎤  Dispositivos de Audio                                 │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │ Micrófono:                                              ││
+│  │ [Monitor of Built-in Audio Analog Stereo ▼]             ││
+│  │                                                         ││
+│  │ Audio del sistema:                                      ││
+│  │ [Monitor of Built-in Audio Analog Stereo ▼]             ││
+│  │ La captura usa el monitor del sink de PulseAudio...     ││
+│  └─────────────────────────────────────────────────────────┘│
+│                                                             │
+│  ✨  Configuración de Ollama                               │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │ Servidor Ollama:                                        ││
+│  │ Host: [localhost               ]  Puerto: [11434 ]     ││
+│  │                                                         ││
+│  │ ● Ollama disponible                                     ││
+│  │                                                         ││
+│  │ [🔄 Probar conexión]                                    ││
+│  │                                                         ││
+│  │ ☑ Habilitar mejora con Ollama                          ││
+│  │ ─────────────────────────────────────────────────────   ││
+│  │ Modelo para generar resúmenes:                          ││
+│  │ [qwen3.5:4b                               ▼]           ││
+│  │                                                         ││
+│  │ [↻ Actualizar lista de modelos]                        ││
+│  └─────────────────────────────────────────────────────────┘│
+│                                                             │
+│  📁  Carpeta de grabaciones                                │
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │ Ruta donde se guardarán las grabaciones:                ││
+│  │ [/home/user/Scrivano/recordings                     ]  ││
+│  └─────────────────────────────────────────────────────────┘│
+│                                                             │
+│              [  💾  Guardar configuración  ]                │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Características de la UI:**
+- ✅ **Tarjetas con padding**: Cada sección tiene fondo, borde y margen interno de 16px
+- ✅ **Espaciado consistente**: 20px entre secciones, 8-16px entre elementos
+- ✅ **Configuración Ollama completa**: Host y puerto editables con botón de prueba
+- ✅ **Combo boxes mejorados**: Ancho ajustado con padding interno
+- ✅ **Botón de guardar prominente**: Tamaño aumentado con icono
+
+---
+
+## Características Implementadas
+
+### ✅ Grabación de Audio (FR-001, FR-002)
+- Captura de audio del sistema (loopback) + micrófono opcional
+- Botón iniciar/detener grabación con indicador visual
+- Estado en tiempo real con waveform animado
+- Contador de tiempo y highlights durante grabación
+
+### ✅ Highlights (FR-004)
+- Botón "⭐ Highlight" durante la grabación
+- Registro automático de timestamp
+- Visualización del contador en UI
+
+### ✅ Transcripción Local (FR-005, FR-007)
+- Whisper embebido en Rust (whisper-rs)
+- Segmentación temporal con start/end
+- Soporte español e inglés
+- Progreso visual durante transcripción
+
+### ✅ Resúmenes con Ollama (FR-008, FR-009)
+- **Resumen Ejecutivo**: Síntesis de puntos principales
+- **Tareas**: Extracción de tareas asignadas
+- **Decisiones**: Lista de decisiones tomadas
+- Limpieza automática de respuestas "thinking"
+- Soporte para modelos reasoning (deepseek-r1, qwen3, etc.)
+
+### ✅ Exportación (FR-012)
+- **Desde transcripción actual**: TXT, Markdown, JSON, SRT, WebVTT
+- **Desde historial**: Botón "📥 Exportar" en cada grabación
+- Formato Markdown con metadatos (fecha, duración)
+
+### ✅ Configuración de Ollama (FR-014)
+- **Host configurable**: Por defecto `localhost`, editable
+- **Puerto configurable**: Por defecto `11434`, editable
+- **Botón de prueba**: Verifica conectividad con el servidor
+- **Lista de modelos**: Selección desde modelos instalados
+- **Persistencia**: Guarda en settings.toml
+
+### ✅ Historial de Grabaciones (FR-011)
+- Lista de grabaciones con metadatos
+- Filtros visuales por fecha y duración
+- **Acciones por grabación**:
+  - 📄 Abrir archivo
+  - 📥 Exportar a Markdown
+  - ✨ Generar resumen (si Ollama está disponible)
+
+### ✅ Persistencia (FR-013)
+- SQLite3 para metadatos
+- Sistema de archivos para grabaciones
+- Archivo de configuración TOML
+
+### ✅ Offline (FR-015)
+- Funciona sin Internet
+- Whisper local no requiere red
+- Ollama opcional
+
+---
+
+## Requisitos del Sistema
+
+### Dependencias del Sistema
+
+| Paquete | Para qué sirve |
+|---------|----------------|
+| `libpulse-dev` | Captura de audio del sistema |
+| `libclang-dev` | Compilación de whisper-rs |
+| `libasound2-dev` | Reproducción de audio (rodio) |
+| `libxdo-dev` (opcional) | Icono en bandeja del sistema |
 
 ```bash
-git clone https://github.com/ggml-org/whisper.cpp
-cd whisper.cpp/models
+# Instalar dependencias en Ubuntu/Debian
+# Básico (sin audio playback ni tray)
+sudo apt install libpulse-dev libclang-dev
 
-# Para ggml-small.bin
-./download-ggml-model.sh small
+# Con reproducción de audio (requiere rodio)
+sudo apt install libpulse-dev libasound2-dev libclang-dev
 
-# Para ggml-medium.bin
-./download-ggml-model.sh medium
+# Completo (con tray-icon)
+sudo apt install libpulse-dev libasound2-dev libclang-dev libxdo-dev
+```
 
-Esto dejará los modelos en whisper.cpp/models/ggml-small.bin y whisper.cpp/models/ggml-medium.bin. [web:109][web:65]
+### Modelos Whisper
 
-Después, cópialos a la carpeta models/ de tu proyecto:
+Descarga modelos de https://github.com/ggml-org/whisper.cpp:
 
+```bash
 mkdir -p models
-cp /ruta/a/whisper.cpp/models/ggml-small.bin models/
-# o
-cp /ruta/a/whisper.cpp/models/ggml-medium.bin models/
-
----
-
-## Compilar y empaquetar
-
-### Requisitos del entorno de desarrollo
-
-| Herramienta | Instalación |
-|-------------|-------------|
-| Rust (stable) | `curl https://sh.rustup.rs -sSf \| sh` |
-| `fakeroot` | `sudo apt install fakeroot` |
-| `dpkg-deb` | `sudo apt install dpkg` *(viene con Ubuntu)* |
-| `libpulse-dev` | `sudo apt install libpulse-dev` |
-| LLVM 14 | Se descarga automáticamente en el primer build |
-
-> **LLVM 14** es necesario para compilar `whisper-rs`. El `Makefile` y el `dist.sh` lo descargan solos en `/tmp/` si no está presente.
-
----
-
-## Makefile — referencia de comandos
-
-```bash
-make              # alias de make release
-make release      # compila el binario optimizado (cargo build --release)
-make build        # compila en modo debug (cargo build)
-make deb          # compila + genera el paquete .deb
-make deb-only     # genera el .deb sin recompilar
-make dist         # genera el tarball portable .tar.gz
-make install      # instala directamente en el sistema (requiere sudo)
-make uninstall    # desinstala del sistema (requiere sudo)
-make check        # inspecciona el .deb generado (info + contenido)
-make clean        # elimina target/, dist/ y packaging/
-make clean-pkg    # elimina solo dist/ y packaging/
-make help         # muestra todos los comandos disponibles
-```
-
-### Flujo típico de desarrollo
-
-```bash
-# 1. Compilar y probar en debug
-make build
-./target/debug/meet-whisperer
-
-# 2. Compilar release y probar
-make release
-./target/release/meet-whisperer
-
-# 3. Generar el instalador .deb
-make deb
-
-# 4. Instalar y verificar
-sudo dpkg -i packaging/meet-whisperer_0.1.0_amd64.deb
-meet-whisperer
+# Descarga uno de estos:
+# - ggml-small.bin (~487 MB) - Recomendado
+# - ggml-medium.bin (~1.5 GB) - Mejor calidad
 ```
 
 ---
 
-## Generar el paquete .deb
+## Compilar y Ejecutar
 
-El script `package-deb.sh` automatiza la creación del instalador `.deb` para Ubuntu/Debian.
-
-### Uso directo
+### Compilación
 
 ```bash
-# Compilar y empacar en un solo paso
-./package-deb.sh
+# Básico (sin features opcionales)
+cargo build --release --no-default-features
 
-# Solo empacar (asume que target/release/meet-whisperer ya existe)
-./package-deb.sh --no-build
+# Con reproducción de audio (requiere libasound2-dev)
+cargo build --release --features audio-playback
+
+# Con bandeja del sistema (requiere libxdo-dev)
+cargo build --release --features tray-icon
+
+# Completo: audio + bandeja
+cargo build --release --features "audio-playback tray-icon"
 ```
 
-### Qué hace el script paso a paso
-
-| Paso | Acción |
-|------|--------|
-| 1 | Verifica que `dpkg-deb` y `cargo` estén instalados |
-| 2 | Compila el binario en modo release con `cargo build --release` |
-| 3 | Crea la estructura de directorios del paquete en `packaging/` |
-| 4 | Copia el binario a `/opt/meet-whisperer/` |
-| 5 | Copia las librerías compartidas (`ldd`) a `/opt/meet-whisperer/lib/` |
-| 6 | Copia los modelos Whisper `.bin` a `/opt/meet-whisperer/models/` |
-| 7 | Crea `run.sh` (lanzador que configura `LD_LIBRARY_PATH`) |
-| 8 | Instala los íconos en `/usr/share/icons/hicolor/{16..512}px/` |
-| 9 | Crea la entrada `.desktop` para el launcher del sistema |
-| 10 | Genera `DEBIAN/control` con metadatos y dependencias |
-| 11 | Genera `postinst`, `prerm`, `postrm` (hooks de instalación) |
-| 12 | Calcula `md5sums` para verificación de integridad |
-| 13 | Construye el `.deb` con `fakeroot dpkg-deb --build` |
-
-### Resultado
-
-```
-packaging/
-└── meet-whisperer_0.1.0_amd64.deb    ← instalador final (~670 MB)
-```
-
-### Instalar el .deb en Ubuntu
+### Ejecución
 
 ```bash
-# Instalar
-sudo dpkg -i packaging/meet-whisperer_0.1.0_amd64.deb
-
-# Si faltan dependencias del sistema
-sudo apt-get install -f
-
-# Verificar instalación
-meet-whisperer          # desde terminal
-# o busca "MeetWhisperer" en el launcher de aplicaciones
-```
-
-### Desinstalar
-
-```bash
-sudo dpkg -r meet-whisperer          # desinstala (conserva config de usuario)
-sudo dpkg --purge meet-whisperer     # desinstala + elimina /opt/meet-whisperer
-```
-
-### Estructura instalada en el sistema
-
-```
-/opt/meet-whisperer/
-├── meet-whisperer          ← binario principal
-├── run.sh                  ← lanzador con LD_LIBRARY_PATH
-├── lib/                    ← librerías bundled (portabilidad entre distros)
-│   ├── libpulse.so.0
-│   ├── libstdc++.so.6
-│   └── ...
-└── models/
-    ├── ggml-tiny.bin
-    ├── ggml-small.bin
-    └── ggml-small-q5_1.bin
-
-/usr/bin/meet-whisperer     → symlink a /opt/meet-whisperer/run.sh
-/usr/share/applications/meet-whisperer.desktop
-/usr/share/icons/hicolor/
-├── 16x16/apps/meet-whisperer.png
-├── 32x32/apps/meet-whisperer.png
-├── 64x64/apps/meet-whisperer.png
-├── 128x128/apps/meet-whisperer.png
-├── 256x256/apps/meet-whisperer.png
-└── 512x512/apps/meet-whisperer.png
-```
-
-### Datos del usuario (no se instalan ni se borran con dpkg)
-
-```
-~/.config/meet-whisperer/
-├── settings.toml           ← configuración (dispositivos, modelo, Ollama)
-└── recordings.db           ← historial de grabaciones (SQLite)
-
-~/Grabaciones/              ← transcripciones .txt (ruta configurable)
+./target/release/scrivano
 ```
 
 ---
 
-## Tarball portable (alternativa al .deb)
+## Flujo de Uso
 
-Si necesitas distribuir la app sin instalarla como paquete del sistema:
+### 1. Primera Ejecución
+1. Abre Scrivano
+2. Ve a **Configuración**
+3. Selecciona tu modelo Whisper
+4. Configura dispositivos de audio
+5. (Opcional) Configura Ollama host/puerto y prueba conexión
+6. Guarda configuración
 
-```bash
-./dist.sh                   # compila + empaca en .tar.gz
-# o
-make dist
+### 2. Durante una Reunión
+1. Haz clic en **⏺ Iniciar grabación**
+2. El waveform muestra actividad de audio
+3. Presiona **⭐ Highlight** en momentos importantes
+4. Presiona **⏹ Detener** al terminar
+5. Espera la transcripción (barra de progreso)
+
+### 3. Después de la Transcripción
+1. Revisa el texto transcrito
+2. Exporta en el formato deseado (TXT, MD, JSON, SRT, VTT)
+3. Genera un resumen (Ejecutivo, Tareas o Decisiones) si tienes Ollama
+4. La grabación se guarda automáticamente en el historial
+
+### 4. Desde el Historial
+1. Haz clic en **▼ Grabaciones recientes** para expandir
+2. Cada grabación muestra:
+   - Nombre, fecha y duración
+   - Botón **📥 Exportar** - Crea archivo Markdown
+   - Botón **✨ Resumen** - Genera resumen con Ollama
+   - Botón **📄 Abrir** - Abre el archivo original
+
+---
+
+## Problemas Conocidos
+
+### Error "WinitEventLoop(NotSupported)"
+- **Causa**: No hay servidor graphical disponible
+- **Solución**: Usar en máquina con GUI o configurar Xvfb
+
+### Error "unable to find library -lxdo"
+- **Solución**: `sudo apt install libxdo-dev` o compilar sin features
+
+### Timestamps en exportación
+- **Estado**: Actualmente los archivos exportados muestran 00:00:00
+- **Razón**: Los segmentos con timestamps de Whisper no se pasan correctamente desde el thread de transcripción
+- **Workaround**: La transcripción se exporta completa con metadatos
+
+---
+
+## Tecnologías
+
+- **Rust 2021** - Lenguaje
+- **egui/eframe 0.27** - UI framework
+- **whisper-rs 0.15** - Transcripción local
+- **libpulse-binding** - Captura de audio
+- **rusqlite** - Base de datos
+- **Ollama** - Resúmenes (opcional)
+
+---
+
+## Estructura del Proyecto
+
+```
+Scrivano/
+├── Cargo.toml
+├── models/
+│   └── ggml-*.bin              # Modelos Whisper
+├── src/
+│   ├── main.rs                 # Punto de entrada
+│   ├── lib.rs                  # Exports
+│   ├── audio.rs                # Captura de audio
+│   ├── audio_devices.rs        # Configuración y settings
+│   ├── transcription.rs        # Whisper integration
+│   ├── ollama.rs               # Cliente Ollama
+│   ├── summarization.rs        # Generación de resúmenes
+│   ├── database.rs             # SQLite persistence
+│   ├── export.rs               # Exportación multi-formato
+│   └── ui.rs                   # Interfaz egui (1700+ líneas)
+├── tests/
+│   ├── transcription_tests.rs
+│   └── export_tests.rs
+└── README.md
 ```
 
-Resultado: `dist/meet-whisperer.tar.gz`
+---
+
+## Contributing
+
+### Reglas de Testing (OBLIGATORIO)
+
+Todo cambio significativo debe incluir tests:
 
 ```bash
-# Uso en otro equipo
-tar -xzf meet-whisperer.tar.gz
-./meet-whisperer/run.sh
+# Verificar antes de commit
+cargo fmt --check
+cargo clippy --all-targets --all-features
+cargo test
 ```
 
+Ver `AGENTS.md` para requisitos completos de testing.
+
+---
+
+## Licencia
+
+Desarrollado por Gustavo Gutiérrez - Bogotá, Colombia

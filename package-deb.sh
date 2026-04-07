@@ -1,5 +1,5 @@
 #!/bin/bash
-# package-deb.sh — Genera el paquete .deb de MeetWhisperer para Ubuntu/Debian
+# package-deb.sh — Genera el paquete .deb de Scrivano para Ubuntu/Debian
 #
 # Uso:
 #   ./package-deb.sh            # compila + empaca
@@ -9,7 +9,7 @@
 set -euo pipefail
 
 # ── Configuración ─────────────────────────────────────────────────────────────
-PKG_NAME="meet-whisperer"
+PKG_NAME="scrivano"
 PKG_VERSION="0.1.0"
 PKG_ARCH="amd64"
 PKG_MAINTAINER="Gustavo Gutiérrez <gustavo@example.com>"
@@ -100,13 +100,13 @@ fi
 step "Creando script lanzador..."
 cat > "${DEB_ROOT}${INSTALL_DIR}/run.sh" << 'LAUNCHER'
 #!/bin/bash
-DIR="/opt/meet-whisperer"
+DIR="/opt/scrivano"
 cd "$DIR"                                      # modelos se buscan relativos al cwd
 export LD_LIBRARY_PATH="$DIR/lib:${LD_LIBRARY_PATH:-}"
 
 # Silenciar warnings de GTK/GLib del tray icon (benignos en algunos DEs)
 # y mensajes internos de whisper.cpp — solo mostrar errores reales de la app.
-exec "$DIR/meet-whisperer" "$@" \
+exec "$DIR/scrivano" "$@" \
     2> >(grep -Ev \
         "Gtk-CRITICAL|GLib-GObject|GLib-GLib|whisper_model_load|whisper_init_with_params|whisper_init_from_file" \
         >&2)
@@ -132,7 +132,7 @@ cat > "${DEB_ROOT}/usr/share/applications/${PKG_NAME}.desktop" << DESKTOP
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=MeetWhisperer
+Name=Scrivano
 GenericName=Transcriptor de reuniones
 Comment=Transcripción local de audio del sistema usando Whisper AI
 Exec=${INSTALL_DIR}/run.sh
@@ -140,7 +140,7 @@ Icon=${PKG_NAME}
 Terminal=false
 Categories=AudioVideo;Audio;Utility;
 Keywords=transcription;whisper;meeting;audio;ai;ollama;
-StartupWMClass=meet-whisperer
+StartupWMClass=scrivano
 DESKTOP
 
 # ── Paso 9: Calcular tamaño instalado ─────────────────────────────────────────
@@ -160,7 +160,7 @@ Recommends: ollama
 Maintainer: ${PKG_MAINTAINER}
 Description: ${PKG_DESCRIPTION}
 $(echo "${PKG_LONG_DESC}" | sed 's/^/ /')
-Homepage: https://github.com/gustavo/meet-whisperer
+Homepage: https://github.com/gustavo/scrivano
 CONTROL
 
 # ── Paso 11: Scripts de mantenimiento ─────────────────────────────────────────
@@ -193,7 +193,7 @@ cat > "${DEB_ROOT}/DEBIAN/postrm" << 'POSTRM'
 set -e
 # Limpiar base de datos del usuario (opcional, solo si purge)
 if [ "$1" = "purge" ]; then
-    rm -rf /opt/meet-whisperer || true
+    rm -rf /opt/scrivano || true
 fi
 if command -v update-icon-caches >/dev/null 2>&1; then
     update-icon-caches /usr/share/icons/hicolor || true

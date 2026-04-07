@@ -290,7 +290,11 @@ impl App {
         ui.vertical_centered(|ui| {
             if is_busy {
                 let (label, pct) = if is_transcribing {
-                    let p = if transcribe_pct >= 0 { transcribe_pct } else { 0 };
+                    let p = if transcribe_pct >= 0 {
+                        transcribe_pct
+                    } else {
+                        0
+                    };
                     (format!("⏳  Transcribiendo...  {}%", p), p)
                 } else {
                     let p = if ollama_pct >= 0 { ollama_pct } else { 0 };
@@ -307,15 +311,18 @@ impl App {
                 ui.add_space(8.0);
                 let bar_width = 320.0_f32;
                 let bar_height = 6.0_f32;
-                let (bar_rect, _) = ui.allocate_exact_size(
-                    egui::vec2(bar_width, bar_height),
-                    Sense::hover(),
-                );
+                let (bar_rect, _) =
+                    ui.allocate_exact_size(egui::vec2(bar_width, bar_height), Sense::hover());
                 ui.painter().rect_filled(bar_rect, 3.0, BG_PANEL);
                 let fill_w = bar_rect.width() * (pct as f32 / 100.0).clamp(0.0, 1.0);
                 if fill_w > 0.0 {
-                    let fill_rect = Rect::from_min_size(bar_rect.min, egui::vec2(fill_w, bar_height));
-                    let bar_color = if is_transcribing { ACCENT_BLUE } else { ACCENT_PURPLE };
+                    let fill_rect =
+                        Rect::from_min_size(bar_rect.min, egui::vec2(fill_w, bar_height));
+                    let bar_color = if is_transcribing {
+                        ACCENT_BLUE
+                    } else {
+                        ACCENT_PURPLE
+                    };
                     ui.painter().rect_filled(fill_rect, 3.0, bar_color);
                 }
             } else if is_recording {
@@ -329,7 +336,8 @@ impl App {
                 .rounding(10.0);
 
                 if ui.add_sized(egui::vec2(300.0, 60.0), btn).clicked() {
-                    self.last_recording_duration = self.recording_start
+                    self.last_recording_duration = self
+                        .recording_start
                         .map(|s| s.elapsed().as_secs_f64())
                         .unwrap_or(0.0);
                     self.stop_and_transcribe();
@@ -353,38 +361,35 @@ impl App {
 
         ui.add_space(12.0);
 
-        // ── Waveform / spectrum ──────────────────────────────────────────────
-        let wave_height = 110.0;
-        let desired_size = egui::vec2(ui.available_width(), wave_height);
+        // ── Recording status ─────────────────────────────────────────────────
+        let status_height = 50.0;
+        let desired_size = egui::vec2(ui.available_width(), status_height);
         let (response, painter) = ui.allocate_painter(desired_size, Sense::hover());
         let rect = response.rect;
 
         painter.rect_filled(rect, 8.0, BG_PANEL);
 
-        let samples = self.waveform_buffer.lock().unwrap().clone();
-
-        if is_recording && samples.len() >= 2 {
-            draw_waveform_gradient(&painter, rect, &samples);
-
+        if is_recording {
             let t = ui.input(|i| i.time);
             let blink = ((t * 2.5).sin() * 0.5 + 0.5) as f32;
             let dot = Color32::from_rgba_premultiplied(230, (40.0 + 200.0 * blink) as u8, 40, 255);
-            painter.circle_filled(Pos2::new(rect.left() + 14.0, rect.top() + 14.0), 6.0, dot);
+            painter.circle_filled(Pos2::new(rect.left() + 14.0, rect.center().y), 6.0, dot);
             painter.text(
-                Pos2::new(rect.left() + 26.0, rect.top() + 7.0),
+                Pos2::new(rect.left() + 26.0, rect.center().y - 7.0),
                 egui::Align2::LEFT_TOP,
                 "REC",
                 FontId::monospace(12.0),
                 dot,
             );
 
-            let elapsed = self.recording_start
+            let elapsed = self
+                .recording_start
                 .map(|s| s.elapsed().as_secs_f32())
                 .unwrap_or(0.0);
             let mins = (elapsed / 60.0) as u32;
             let secs = (elapsed % 60.0) as u32;
             painter.text(
-                Pos2::new(rect.right() - 8.0, rect.top() + 7.0),
+                Pos2::new(rect.right() - 8.0, rect.center().y - 7.0),
                 egui::Align2::RIGHT_TOP,
                 format!("{:02}:{:02}", mins, secs),
                 FontId::monospace(14.0),
@@ -393,13 +398,6 @@ impl App {
         } else {
             let mid_y = rect.center().y;
             if !is_busy {
-                painter.line_segment(
-                    [
-                        Pos2::new(rect.left() + 8.0, mid_y),
-                        Pos2::new(rect.right() - 8.0, mid_y),
-                    ],
-                    Stroke::new(1.5, Color32::from_rgb(50, 58, 70)),
-                );
                 painter.text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
@@ -410,14 +408,18 @@ impl App {
             }
         }
 
-        ui.add_space(12.0);
+        ui.add_space(8.0);
         ui.separator();
         ui.add_space(6.0);
 
         // ── Transcript area + Recordings history ─────────────────────────────
         // Split available height: transcript 45%, recordings list 55%
         let avail = ui.available_height();
-        let transcript_h = if self.show_recordings { avail * 0.40 } else { avail - 4.0 };
+        let transcript_h = if self.show_recordings {
+            avail * 0.40
+        } else {
+            avail - 4.0
+        };
         let recordings_h = avail - transcript_h - 32.0;
 
         ui.label(RichText::new("Transcripción").size(13.0).color(TEXT_DIM));
@@ -578,13 +580,17 @@ impl App {
             {
                 is_improving.store(true, Ordering::SeqCst);
                 ollama_progress.store(0, Ordering::SeqCst);
-                *transcript.lock().unwrap() =
-                    format!("{}\n\n[Mejorando con Ollama…]", raw_text);
+                *transcript.lock().unwrap() = format!("{}\n\n[Mejorando con Ollama…]", raw_text);
 
                 let op = ollama_progress.clone();
-                let improved = match ollama::improve_transcript(&ollama_model, &raw_text, move |pct| {
-                    op.store(pct, Ordering::SeqCst);
-                }) {
+                let improved = match ollama::improve_transcript(
+                    &ollama_model,
+                    &raw_text,
+                    move |pct| {
+                        op.store(pct, Ordering::SeqCst);
+                    },
+                    None,
+                ) {
                     Ok(t) => {
                         eprintln!("[ollama] mejora completada ({} chars)", t.len());
                         t
@@ -625,6 +631,8 @@ impl App {
                             duration_secs,
                             ollama_model_used.is_some(),
                             ollama_model_used.as_deref(),
+                            None,
+                            None,
                         );
                         recordings_dirty.store(true, Ordering::SeqCst);
                     }
@@ -759,9 +767,11 @@ impl App {
                 }
 
                 ui.label(
-                    RichText::new("  La captura del sistema usa el monitor del sink de PulseAudio/PipeWire.")
-                        .size(12.0)
-                        .color(TEXT_MUTED),
+                    RichText::new(
+                        "  La captura del sistema usa el monitor del sink de PulseAudio/PipeWire.",
+                    )
+                    .size(12.0)
+                    .color(TEXT_MUTED),
                 );
 
                 ui.add_space(16.0);
@@ -778,9 +788,11 @@ impl App {
                     );
                     ui.add_space(4.0);
                     ui.label(
-                        RichText::new("Instala Ollama (ollama.com) y asegúrate de que esté corriendo.")
-                            .size(12.0)
-                            .color(TEXT_DIM),
+                        RichText::new(
+                            "Instala Ollama (ollama.com) y asegúrate de que esté corriendo.",
+                        )
+                        .size(12.0)
+                        .color(TEXT_DIM),
                     );
                 } else {
                     status_badge(ui, "Ollama disponible", ACCENT_GREEN);
@@ -882,7 +894,9 @@ impl App {
                 // ── Save button ────────────────────────────────────────────────
                 ui.vertical_centered(|ui| {
                     let save_btn = egui::Button::new(
-                        RichText::new("  Guardar configuración  ").size(16.0).color(Color32::WHITE),
+                        RichText::new("  Guardar configuración  ")
+                            .size(16.0)
+                            .color(Color32::WHITE),
                     )
                     .fill(ACCENT_BLUE)
                     .rounding(8.0);
@@ -897,7 +911,9 @@ impl App {
                             .get(self.selected_output_index)
                             .map(|(_, id)| id.clone());
 
-                        if let Some((_, path)) = self.available_models.get(self.selected_model_index) {
+                        if let Some((_, path)) =
+                            self.available_models.get(self.selected_model_index)
+                        {
                             self.settings.whisper_model = path.clone();
                         }
 
@@ -1070,10 +1086,7 @@ fn show_recording_row(ui: &mut egui::Ui, entry: &RecordingEntry) {
                             .color(TEXT_DIM),
                     );
                     if entry.ollama_used {
-                        let model = entry
-                            .ollama_model
-                            .as_deref()
-                            .unwrap_or("Ollama");
+                        let model = entry.ollama_model.as_deref().unwrap_or("Ollama");
                         ui.label(
                             RichText::new(format!("✨ {}", model))
                                 .size(11.0)
@@ -1084,12 +1097,11 @@ fn show_recording_row(ui: &mut egui::Ui, entry: &RecordingEntry) {
             });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let open_btn = egui::Button::new(
-                    RichText::new("Abrir").size(12.0).color(ACCENT_BLUE),
-                )
-                .fill(Color32::TRANSPARENT)
-                .stroke(Stroke::new(1.0, ACCENT_BLUE))
-                .rounding(4.0);
+                let open_btn =
+                    egui::Button::new(RichText::new("Abrir").size(12.0).color(ACCENT_BLUE))
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(Stroke::new(1.0, ACCENT_BLUE))
+                        .rounding(4.0);
 
                 if ui.add(open_btn).clicked() {
                     // Open the .txt file with the system's default app
@@ -1168,7 +1180,10 @@ fn chrono_local_now() -> String {
     let days = s / 86400;
     // Approximate Gregorian date from epoch days
     let (y, mo, d) = days_to_ymd(days);
-    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, mo, d, hour, min, sec)
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        y, mo, d, hour, min, sec
+    )
 }
 
 fn days_to_ymd(days: u64) -> (u64, u64, u64) {

@@ -1,4 +1,4 @@
-//! Audio device management module for MeetWhisperer.
+//! Audio device management module for Scrivano.
 //!
 //! Provides functionality to enumerate available audio input and output devices
 //! using PulseAudio command-line tools.
@@ -121,7 +121,7 @@ pub fn get_default_output_device() -> Option<AudioDevice> {
 ///
 /// Search order:
 /// 1. `models/` relative to the current working directory (dev/local mode).
-/// 2. `models/` next to the running executable (installed mode, e.g. /opt/meet-whisperer/models/).
+/// 2. `models/` next to the running executable (installed mode, e.g. /opt/Scrivano/models/).
 /// Returns the first directory that exists and contains at least one `.bin` file.
 fn find_models_dir() -> Option<std::path::PathBuf> {
     let candidates: Vec<std::path::PathBuf> = {
@@ -164,7 +164,8 @@ pub fn scan_models() -> Vec<(String, String)> {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) == Some("bin") {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()).map(str::to_owned) {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()).map(str::to_owned)
+                    {
                         // Use canonical absolute path so it works regardless of cwd
                         let abs = path.canonicalize().unwrap_or_else(|_| path.clone());
                         models.push((name, abs.to_string_lossy().into_owned()));
@@ -182,7 +183,10 @@ pub fn scan_models() -> Vec<(String, String)> {
             .ok()
             .and_then(|e| e.parent().map(|d| d.join("models/ggml-tiny.bin")))
             .unwrap_or_else(|| std::path::PathBuf::from("models/ggml-tiny.bin"));
-        models.push(("ggml-tiny.bin".to_string(), fallback.to_string_lossy().into_owned()));
+        models.push((
+            "ggml-tiny.bin".to_string(),
+            fallback.to_string_lossy().into_owned(),
+        ));
     }
 
     models
@@ -199,12 +203,22 @@ pub struct AppSettings {
     pub ollama_enabled: bool,
     /// Which Ollama model to use for post-processing.
     pub ollama_model: String,
+    /// Ollama host (default: localhost)
+    pub ollama_host: String,
+    /// Ollama port (default: 11434)
+    pub ollama_port: u16,
+    /// Custom prompt for Ollama corrections (e.g., correct technical terms)
+    pub prompt_correction: String,
+    /// Custom prompt for transcript improvement
+    pub prompt_transcript: String,
+    /// Custom prompt for summary generation
+    pub prompt_summary: String,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         let recordings_folder = std::env::var("HOME")
-            .map(|h| format!("{}/MeetWhisperer/recordings", h))
+            .map(|h| format!("{}/Scrivano/recordings", h))
             .unwrap_or_else(|_| "recordings".to_string());
 
         // Use the first available model found via the search path
@@ -221,6 +235,11 @@ impl Default for AppSettings {
             whisper_model,
             ollama_enabled: false,
             ollama_model: String::new(),
+            ollama_host: "localhost".to_string(),
+            ollama_port: 11434,
+            prompt_correction: String::new(),
+            prompt_transcript: String::new(),
+            prompt_summary: String::new(),
         }
     }
 }
@@ -270,7 +289,7 @@ impl AppSettings {
 
     fn config_path() -> std::path::PathBuf {
         std::env::var("HOME")
-            .map(|h| format!("{}/.config/meet-whisperer/settings.toml", h))
+            .map(|h| format!("{}/.config/Scrivano/settings.toml", h))
             .unwrap_or_else(|_| "settings.toml".to_string())
             .into()
     }

@@ -1,5 +1,5 @@
 #!/bin/bash
-# dist.sh — Genera la distribución portable de MeetWhisperer
+# dist.sh — Genera la distribución portable de Scrivano
 # Uso: ./dist.sh [--release-only]
 set -e
 
@@ -7,7 +7,7 @@ set -e
 export LIBCLANG_PATH=/tmp/clang+llvm-14.0.0-x86_64-linux-gnu-ubuntu-18.04/lib
 export LD_LIBRARY_PATH=/home/meridian/lib:$LD_LIBRARY_PATH
 
-APP_NAME="meet-whisperer"
+APP_NAME="scrivano"
 DIST_DIR="dist/$APP_NAME"
 BINARY="target/release/$APP_NAME"
 
@@ -56,7 +56,7 @@ cat > "$DIST_DIR/run.sh" << 'EOF'
 # Lanzador portable — ajusta LD_LIBRARY_PATH para usar las libs incluidas
 DIR="$(cd "$(dirname "$0")" && pwd)"
 export LD_LIBRARY_PATH="$DIR:$LD_LIBRARY_PATH"
-exec "$DIR/meet-whisperer" "$@"
+exec "$DIR/scrivano" "$@"
 EOF
 chmod +x "$DIST_DIR/run.sh"
 

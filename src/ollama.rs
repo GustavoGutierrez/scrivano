@@ -1,9 +1,11 @@
-//! Ollama integration for MeetWhisperer.
+//! Ollama integration for Scrivano.
 //!
 //! Provides:
 //! - Detection of a running Ollama instance (`is_available`)
 //! - Listing installed models (`list_models`)
 //! - Post-processing transcripts to fix redaction and typos (`improve_transcript`)
+//! - Summary generation via Ollama
+//! - STT fallback via Ollama
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -35,31 +37,115 @@ struct ChatMessage {
     content: String,
 }
 
+/// Ollama client for managing connections and requests
+pub struct OllamaClient {
+    host: String,
+    port: u16,
+}
+
+impl OllamaClient {
+    /// Create a new Ollama client with custom host and port
+    pub fn new(host: &str, port: u16) -> Self {
+        Self {
+            host: host.to_string(),
+            port,
+        }
+    }
+
+    /// Create a client with default localhost:11434
+    pub fn default_client() -> Self {
+        Self::new("localhost", 11434)
+    }
+
+    /// Get the base URL for Ollama requests
+    fn base_url(&self) -> String {
+        format!("http://{}:{}", self.host, self.port)
+    }
+
+    /// Check if Ollama is available
+    pub fn is_available(&self) -> bool {
+        ureq::get(&format!("{}/api/tags", self.base_url()))
+            .timeout(std::time::Duration::from_secs(2))
+            .call()
+            .map(|r| r.status() == 200)
+            .unwrap_or(false)
+    }
+
+    /// Check if the client supports streaming (always true for v1)
+    pub fn supports_streaming(&self) -> bool {
+        // For MVP, assume streaming is supported
+        // Can be refined based on model capabilities
+        true
+    }
+
+    /// Generate non-streaming response
+    pub fn generate_non_streaming(&self, prompt: &str, model: &str) -> Result<String> {
+        let body = serde_json::json!({
+            "model": model,
+            "stream": false,
+            "prompt": prompt,
+            "options": {
+                "temperature": 0.3,
+                "top_p": 0.9,
+                "num_predict": 2048
+            }
+        });
+
+        let response = ureq::post(&format!("{}/api/generate", self.base_url()))
+            .timeout(std::time::Duration::from_secs(300))
+            .send_json(body)
+            .context("Failed to connect to Ollama")?;
+
+        #[derive(Deserialize)]
+        struct GenerateResponse {
+            response: String,
+        }
+
+        let gen_response: GenerateResponse = response
+            .into_json()
+            .context("Invalid response from Ollama")?;
+
+        Ok(gen_response.response)
+    }
+
+    /// List available models
+    pub fn list_models(&self) -> Vec<String> {
+        let resp = ureq::get(&format!("{}/api/tags", self.base_url()))
+            .timeout(std::time::Duration::from_secs(5))
+            .call();
+
+        match resp {
+            Ok(r) => r
+                .into_json::<ModelsResponse>()
+                .map(|m| m.models.into_iter().map(|e| e.name).collect())
+                .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        }
+    }
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /// Returns `true` if a local Ollama instance is reachable.
 pub fn is_available() -> bool {
-    ureq::get(&format!("{}/api/tags", OLLAMA_BASE))
-        .timeout(std::time::Duration::from_secs(2))
-        .call()
-        .map(|r| r.status() == 200)
-        .unwrap_or(false)
+    OllamaClient::default_client().is_available()
+}
+
+/// Returns `true` if an Ollama instance is reachable at the given host:port.
+pub fn is_available_at(host: &str, port: u16) -> bool {
+    OllamaClient::new(host, port).is_available()
 }
 
 /// List the names of all models installed in the local Ollama instance.
 /// Returns an empty `Vec` if Ollama is not reachable.
 pub fn list_models() -> Vec<String> {
-    let resp = ureq::get(&format!("{}/api/tags", OLLAMA_BASE))
-        .timeout(std::time::Duration::from_secs(5))
-        .call();
+    OllamaClient::default_client().list_models()
+}
 
-    match resp {
-        Ok(r) => r
-            .into_json::<ModelsResponse>()
-            .map(|m| m.models.into_iter().map(|e| e.name).collect())
-            .unwrap_or_default(),
-        Err(_) => Vec::new(),
-    }
+/// List the names of all models installed in the Ollama instance at host:port.
+/// Returns an empty `Vec` if Ollama is not reachable.
+pub fn list_models_at(host: &str, port: u16) -> Vec<String> {
+    OllamaClient::new(host, port).list_models()
 }
 
 /// Send `raw_text` to Ollama for post-processing using the Chat API.
@@ -69,11 +155,18 @@ pub fn list_models() -> Vec<String> {
 ///
 /// Uses `"think": false` so reasoning/thinking models (e.g. qwen3.5, deepseek-r1)
 /// skip the internal chain-of-thought and return only the final answer directly.
-pub fn improve_transcript<F>(model: &str, raw_text: &str, progress_cb: F) -> Result<String>
+///
+/// `custom_prompt` is an optional additional instruction to append to the system prompt.
+pub fn improve_transcript<F>(
+    model: &str,
+    raw_text: &str,
+    progress_cb: F,
+    custom_prompt: Option<&str>,
+) -> Result<String>
 where
     F: Fn(i32) + Send + Sync + 'static,
 {
-    let system_prompt = build_system_prompt();
+    let system_prompt = build_system_prompt(custom_prompt);
     let user_prompt = format!(
         "Texto a corregir:\n---\n{}\n---\n\nTexto corregido:",
         raw_text
@@ -138,8 +231,8 @@ where
 
 // ── Prompt ────────────────────────────────────────────────────────────────────
 
-fn build_system_prompt() -> &'static str {
-    "Eres un corrector experto de transcripciones automáticas de audio generadas por Whisper. \
+fn build_system_prompt(custom_prompt: Option<&str>) -> String {
+    let mut base = "Eres un corrector experto de transcripciones automáticas de audio generadas por Whisper. \
      Tu única tarea es mejorar el texto transcrito siguiendo estas reglas:\n\
      1. Corrige errores ortográficos y tipográficos obvios producto del reconocimiento de voz.\n\
      2. Restaura palabras cortadas o mal unidas (ej: \"estoy bien ven ido\" → \"estoy bienvenido\").\n\
@@ -148,7 +241,16 @@ fn build_system_prompt() -> &'static str {
      5. NO agregues ni inventes información que no esté en el texto original.\n\
      6. NO agregues explicaciones, comentarios, prefijos ni notas al pie.\n\
      7. Devuelve SOLO el texto corregido, nada más.\n\
-     8. Si el texto ya es correcto, devuélvelo sin cambios."
+     8. Si el texto ya es correcto, devuélvelo sin cambios.".to_string();
+
+    if let Some(custom) = custom_prompt {
+        if !custom.trim().is_empty() {
+            base.push_str("\n\nInstrucciones adicionales:\n");
+            base.push_str(custom);
+        }
+    }
+
+    base
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -173,7 +275,7 @@ mod tests {
     #[test]
     #[ignore = "requires running Ollama instance with qwen3.5:4b"]
     fn improve_returns_nonempty() {
-        let result = improve_transcript("qwen3.5:4b", "hola komo estas ke tal", |_| {});
+        let result = improve_transcript("qwen3.5:4b", "hola komo estas ke tal", |_| {}, None);
         assert!(result.is_ok());
         let text = result.unwrap();
         assert!(!text.is_empty());

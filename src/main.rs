@@ -2,16 +2,20 @@ mod audio;
 mod audio_devices;
 mod database;
 mod ollama;
+mod playback;
 mod transcription;
 mod ui;
 
-use image::{ImageBuffer, Rgba};
-use meet_whisperer::audio_devices::AppSettings;
-use meet_whisperer::transcription::init_whisper;
-use meet_whisperer::ui::App;
+use scrivano::audio_devices::AppSettings;
+use scrivano::transcription::init_whisper;
+use scrivano::ui::App;
+
+#[cfg(feature = "tray-icon")]
 use tray_icon::{Icon, TrayIconBuilder};
 
+#[cfg(feature = "tray-icon")]
 fn create_tray_icon() -> tray_icon::TrayIcon {
+    use image::{ImageBuffer, Rgba};
     let mut img = ImageBuffer::<Rgba<u8>, Vec<u8>>::new(16, 16);
     for pixel in img.pixels_mut() {
         pixel.0 = [30, 180, 60, 255];
@@ -20,7 +24,7 @@ fn create_tray_icon() -> tray_icon::TrayIcon {
 
     TrayIconBuilder::new()
         .with_icon(icon)
-        .with_tooltip("MeetWhisperer")
+        .with_tooltip("Scrivano")
         .build()
         .expect("Failed to build tray icon")
 }
@@ -32,10 +36,14 @@ fn main() -> eframe::Result<()> {
     eprintln!("[main] Cargando modelo: {}", model_path);
     let ctx = init_whisper(&model_path);
 
+    #[cfg(feature = "tray-icon")]
     let _tray = create_tray_icon();
 
+    #[cfg(not(feature = "tray-icon"))]
+    eprintln!("[main] Tray icon deshabilitado (compila sin feature 'tray-icon')");
+
     eframe::run_native(
-        "MeetWhisperer",
+        "Scrivano",
         eframe::NativeOptions::default(),
         Box::new(move |_cc| Box::new(App::new(ctx, settings))),
     )
