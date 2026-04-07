@@ -347,11 +347,15 @@ impl eframe::App for App {
         });
 
         // Keep repainting at 60fps while recording / processing / playing audio for smooth animations
+        #[cfg(feature = "audio-playback")]
         let is_playing_audio = self
             .audio_player
             .as_ref()
             .map(|p| p.is_playing())
             .unwrap_or(false);
+        #[cfg(not(feature = "audio-playback"))]
+        let is_playing_audio = false;
+
         let needs_smooth_animation = self.recording.load(Ordering::SeqCst) || is_playing_audio;
         if needs_smooth_animation {
             // 60fps for smooth spectrum animation
