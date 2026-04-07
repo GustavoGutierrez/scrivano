@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "PRP Generator": {
+      "source": "daffy0208/ai-dev-standards",
+      "sourceType": "github",
+      "computedHash": "bfcda359f27544631778d438ff84365d5a7e67c0fef3de795ff0634705a7ba75"
+    },
+    "rust-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "5a8b4c69ded4bec7009af144c8aea3de5f463765f211c780afea8d7a47fb35e6"
+    }
+  }
+}
