@@ -1,5 +1,5 @@
 name: scrivano
-version: '1.0.0'
+version: '1.0.2'
 summary: Desktop system audio recorder and transcriber
 description: |
   Scrivano is a Rust desktop application that records system audio on Linux 
@@ -15,6 +15,8 @@ description: |
   - Recording history with SQLite
   - System tray icon support
   - Dark theme UI
+
+icon: gui/icon.png
 
 developer: Gustavo Gutiérrez
 license: MIT
@@ -36,6 +38,14 @@ parts:
       - scrivano
     prime:
       - scrivano
+  gui:
+    plugin: dump
+    source: gui/
+    source-type: local
+    stage:
+      - gui/
+    prime:
+      - gui/
 
 apps:
   scrivano:
