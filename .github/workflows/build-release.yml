@@ -91,7 +91,6 @@ jobs:
   create-release:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
 
     steps:
       - name: Download all artifacts
@@ -103,11 +102,17 @@ jobs:
         shell: bash
         run: |
           cd artifacts
-          zip -r ${{ github.event.release.tag_name }}-binaries.zip ./
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
+          else
+            TAG_NAME="${{ github.ref_name }}"
+          fi
+          zip -r ${TAG_NAME}-binaries.zip ./
 
-      - name: Upload Release Asset
-        uses: softprops/action-gh-release@v1
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/${{ github.event.release.tag_name }}-binaries.zip
+          files: artifacts/*.zip
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
