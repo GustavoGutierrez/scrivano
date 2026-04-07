@@ -10,7 +10,9 @@ use anyhow::Result;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SummaryTemplate {
     Executive,
+    Complete,
     Tasks,
+    Jira,
     Decisions,
 }
 
@@ -18,7 +20,9 @@ impl SummaryTemplate {
     pub fn as_str(&self) -> &'static str {
         match self {
             SummaryTemplate::Executive => "executive",
+            SummaryTemplate::Complete => "complete",
             SummaryTemplate::Tasks => "tasks",
+            SummaryTemplate::Jira => "jira",
             SummaryTemplate::Decisions => "decisions",
         }
     }
@@ -26,7 +30,9 @@ impl SummaryTemplate {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "executive" => Some(SummaryTemplate::Executive),
+            "complete" => Some(SummaryTemplate::Complete),
             "tasks" => Some(SummaryTemplate::Tasks),
+            "jira" => Some(SummaryTemplate::Jira),
             "decisions" => Some(SummaryTemplate::Decisions),
             _ => None,
         }
@@ -53,9 +59,21 @@ pub fn build_summary_prompt(
             "Provide a concise executive summary of the meeting in 3-5 bullet points. \
              Focus on: key topics discussed, main decisions made, and action items."
         }
+        SummaryTemplate::Complete => {
+            "Provide a comprehensive summary of the entire meeting. Include: attendee names mentioned, \
+             all topics discussed, detailed decisions made, all action items with owners and deadlines, \
+             important questions raised, and next steps. Be thorough and preserve all key information."
+        }
         SummaryTemplate::Tasks => {
             "Extract all action items and tasks from the meeting. \
              For each task, include: what needs to be done, who is responsible (if mentioned), and deadline (if mentioned)."
+        }
+        SummaryTemplate::Jira => {
+            "Extract all tasks and action items from the meeting and format them as Jira-style tickets. \
+             For each task, provide: Summary (short title), Description (what needs to be done), \
+             Assignee (who is responsible), Priority (Critical/High/Medium/Low), \
+             Due Date (if mentioned). Format as:\n\n- **Summary:** [task title] \
+             \n  **Description:** [details]\n  **Assignee:** [name or 'Unassigned']\n  **Priority:** [level]\n  **Due Date:** [date or 'TBD']"
         }
         SummaryTemplate::Decisions => {
             "List all decisions made during the meeting. \

@@ -1446,6 +1446,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-phosphor"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c873785789bc94a14dcbbd361cda1e498957fa1b4ec389ba650fd651849463b"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "egui-wgpu"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4250,12 +4259,13 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scrivano"
-version = "0.1.0"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "dirs",
  "eframe",
  "egui",
+ "egui-phosphor",
  "hound",
  "image 0.25.10",
  "libpulse-binding",

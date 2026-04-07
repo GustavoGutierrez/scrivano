@@ -23,12 +23,13 @@ serde_json = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 hound = "3.5"
 rodio = { version = "0.19", optional = true }
+egui-phosphor = "0.5.0"
 
 [dev-dependencies]
 tempfile = "3"
 
 [features]
-default = []
+default = ["audio-playback"]
 audio-playback = ["dep:rodio"]
 tray-icon = ["dep:tray-icon"]
 

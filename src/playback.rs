@@ -11,7 +11,9 @@ mod rodio_backend {
         sink: Sink,
         pub current_file: Option<String>,
         start_time: Instant,
+        paused_elapsed_secs: f64,
         duration_secs: f64,
+        last_pause_time: Option<Instant>,
     }
 
     impl AudioPlayer {
@@ -25,7 +27,9 @@ mod rodio_backend {
                 sink,
                 current_file: None,
                 start_time: Instant::now(),
+                paused_elapsed_secs: 0.0,
                 duration_secs: 0.0,
+                last_pause_time: None,
             })
         }
 
@@ -35,24 +39,41 @@ mod rodio_backend {
 
             let source = Decoder::new(reader).context("Failed to decode audio file")?;
 
+            // Stop any current playback and reset state
+            self.sink.stop();
+
             self.sink.append(source);
             self.current_file = Some(path.to_string());
             self.start_time = Instant::now();
+            self.paused_elapsed_secs = 0.0;
+            self.last_pause_time = None;
             self.duration_secs = 0.0;
 
             Ok(())
         }
 
-        pub fn pause(&self) {
-            self.sink.pause();
+        pub fn pause(&mut self) {
+            if !self.sink.is_paused() {
+                self.sink.pause();
+                self.last_pause_time = Some(Instant::now());
+            }
         }
 
-        pub fn resume(&self) {
-            self.sink.play();
+        pub fn resume(&mut self) {
+            if self.sink.is_paused() {
+                self.sink.play();
+                // Add the time elapsed during this pause to the accumulated time
+                if let Some(pause_time) = self.last_pause_time {
+                    self.paused_elapsed_secs += pause_time.elapsed().as_secs_f64();
+                    self.last_pause_time = None;
+                }
+            }
         }
 
-        pub fn stop(&self) {
+        pub fn stop(&mut self) {
             self.sink.stop();
+            self.paused_elapsed_secs = 0.0;
+            self.last_pause_time = None;
         }
 
         pub fn is_playing(&self) -> bool {
@@ -76,7 +97,20 @@ mod rodio_backend {
         }
 
         pub fn get_elapsed_secs(&self) -> f64 {
-            self.start_time.elapsed().as_secs_f64()
+            if self.is_stopped() {
+                return 0.0;
+            }
+
+            if self.sink.is_paused() {
+                // When paused, return the accumulated time + time since this pause started
+                if let Some(pause_time) = self.last_pause_time {
+                    return self.paused_elapsed_secs + pause_time.elapsed().as_secs_f64();
+                }
+                return self.paused_elapsed_secs;
+            }
+
+            // When playing, return accumulated time + current session time
+            self.paused_elapsed_secs + self.start_time.elapsed().as_secs_f64()
         }
 
         pub fn get_duration_secs(&self) -> f64 {
@@ -107,9 +141,9 @@ impl AudioPlayer {
         Err("Audio playback not available (compile with audio-playback feature)".to_string())
     }
 
-    pub fn pause(&self) {}
-    pub fn resume(&self) {}
-    pub fn stop(&self) {}
+    pub fn pause(&mut self) {}
+    pub fn resume(&mut self) {}
+    pub fn stop(&mut self) {}
     pub fn is_playing(&self) -> bool {
         false
     }

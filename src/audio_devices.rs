@@ -199,6 +199,8 @@ pub struct AppSettings {
     pub recordings_folder: String,
     /// Path to the Whisper GGML model file to use for transcription.
     pub whisper_model: String,
+    /// Use GPU for Whisper transcription
+    pub whisper_use_gpu: bool,
     /// Whether to use Ollama to post-process the transcript.
     pub ollama_enabled: bool,
     /// Which Ollama model to use for post-processing.
@@ -207,12 +209,30 @@ pub struct AppSettings {
     pub ollama_host: String,
     /// Ollama port (default: 11434)
     pub ollama_port: u16,
+    /// Use Ollama for STT (alternative to Whisper)
+    pub use_ollama_for_stt: bool,
+    /// Summary model for Ollama (e.g., llama3.2, gemma4:e2b)
+    pub summary_model: String,
+    /// Streaming mode: auto, stream, non_stream
+    pub summary_stream_mode: String,
+    /// Thinking policy: hide_thinking, store_but_hide, show_for_debug
+    pub summary_thinking_policy: String,
+    /// Default language: es, en
+    pub language_default: String,
+    /// Hotkey for start/stop recording
+    pub hotkey_start_stop: String,
+    /// Hotkey for highlight
+    pub hotkey_highlight: String,
     /// Custom prompt for Ollama corrections (e.g., correct technical terms)
     pub prompt_correction: String,
     /// Custom prompt for transcript improvement
     pub prompt_transcript: String,
-    /// Custom prompt for summary generation
-    pub prompt_summary: String,
+    /// Custom prompt for executive summary
+    pub custom_prompt_executive: String,
+    /// Custom prompt for tasks summary
+    pub custom_prompt_tasks: String,
+    /// Custom prompt for decisions summary
+    pub custom_prompt_decisions: String,
 }
 
 impl Default for AppSettings {
@@ -233,13 +253,23 @@ impl Default for AppSettings {
             output_device_id: None,
             recordings_folder,
             whisper_model,
+            whisper_use_gpu: true,
             ollama_enabled: false,
             ollama_model: String::new(),
             ollama_host: "localhost".to_string(),
             ollama_port: 11434,
+            use_ollama_for_stt: false,
+            summary_model: "llama3.2".to_string(),
+            summary_stream_mode: "auto".to_string(),
+            summary_thinking_policy: "hide_thinking".to_string(),
+            language_default: "es".to_string(),
+            hotkey_start_stop: "Ctrl+Shift+R".to_string(),
+            hotkey_highlight: "Ctrl+Shift+H".to_string(),
             prompt_correction: String::new(),
             prompt_transcript: String::new(),
-            prompt_summary: String::new(),
+            custom_prompt_executive: String::new(),
+            custom_prompt_tasks: String::new(),
+            custom_prompt_decisions: String::new(),
         }
     }
 }
@@ -249,11 +279,7 @@ impl AppSettings {
         let config_path = Self::config_path();
         let mut settings = if config_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&config_path) {
-                if let Ok(s) = toml::from_str::<Self>(&content) {
-                    s
-                } else {
-                    Self::default()
-                }
+                toml::from_str::<Self>(&content).unwrap_or_default()
             } else {
                 Self::default()
             }

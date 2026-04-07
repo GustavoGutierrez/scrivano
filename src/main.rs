@@ -3,6 +3,7 @@ mod audio_devices;
 mod database;
 mod ollama;
 mod playback;
+mod summarization;
 mod transcription;
 mod ui;
 

@@ -1,0 +1,45 @@
+# Scrivano SDD Configuration
+schema: spec-driven
+project: scrivano
+
+context: |
+  Tech stack: Rust 2021, eframe/egui 0.27+, whisper-rs 0.15, rusqlite 0.31 (bundled)
+  Architecture: Desktop app with modular structure (audio/, transcription/, storage/, export/)
+  Testing: cargo test (built-in), no external framework
+  Style: cargo fmt + clippy, thiserror for library errors, anyhow for application errors
+
+strict_tdd: true
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected modules/packages
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group tasks by phase (infrastructure, implementation, testing)
+    - Use hierarchical numbering (1.1, 1.2, etc.)
+    - Keep tasks small enough to complete in one session
+  apply:
+    - Follow existing code patterns and conventions
+    - Use thiserror for library errors, anyhow for application errors
+  verify:
+    - Run cargo fmt --check && cargo clippy && cargo test
+    - Compare implementation against every spec scenario
+  archive:
+    - Warn before merging destructive deltas (large removals)
+
+testing:
+  runner: cargo test
+  framework: Rust built-in
+  layers:
+    unit: true
+    integration: false
+    e2e: false
+  coverage: cargo test -- --show-output
+  linter: cargo clippy
+  formatter: cargo fmt
