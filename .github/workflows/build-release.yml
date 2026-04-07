@@ -42,7 +42,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpulse-dev libclang-dev
+          sudo apt-get install -y libpulse-dev libclang-dev libasound2-dev libxdo-dev
 
       - name: Install system dependencies (macOS)
         if: runner.os == 'macOS'
@@ -77,10 +77,8 @@ jobs:
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build release
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --release --no-default-features --features vcpkg --target ${{ matrix.target }}
+        run: |
+          cargo build --release --no-default-features --target ${{ matrix.target }}
 
       - name: Package binary
         shell: bash
