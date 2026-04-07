@@ -1,6 +1,6 @@
 [package]
 name = "scrivano"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 
 [target.x86_64-unknown-linux-gnu]
