@@ -2,8 +2,13 @@ name: Build Release
 
 on:
   release:
-    types: [created]
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build'
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -14,9 +19,6 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-22.04
             artifact: scrivano-x86_64-unknown-linux-gnu
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            artifact: scrivano-ubuntu-latest
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-22.04
             artifact: scrivano-aarch64-unknown-linux-gnu
