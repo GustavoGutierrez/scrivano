@@ -1772,7 +1772,7 @@ impl App {
             let complete_flag = self.summary_generation_complete.clone();
 
             std::thread::spawn(move || {
-                let client = crate::ollama::OllamaClient::new("http://localhost", 11434);
+                let client = crate::ollama::OllamaClient::new("localhost", 11434);
 
                 // Convert Option<String> to Option<String> (owned) for the thread
                 let custom_prompt_ref: Option<String> = custom_prompt_str;
