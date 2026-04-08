@@ -1304,19 +1304,34 @@ impl App {
                     }
                 }); // close ui.horizontal
 
-                // Show summaries if available
-                if !summaries.is_empty() {
-                    ui.add_space(16.0);
-                    ui.separator();
-                    ui.add_space(8.0);
+                // Show summaries section
+                ui.add_space(16.0);
+                ui.separator();
+                ui.add_space(8.0);
+                
+                // Check if any summary generation failed recently
+                let has_error = summaries.iter().any(|s| s.content.starts_with("ERROR:"));
+                let has_empty = summaries.iter().any(|s| s.content.trim().is_empty());
+                
+                if has_error {
+                    ui.label(RichText::new("❌ Error generando resúmenes - revisa la terminal").size(12.0).color(ACCENT_RED));
+                } else if has_empty && !summaries.is_empty() {
+                    ui.label(RichText::new("⚠️ Algunos resúmenes están vacíos").size(12.0).color(ACCENT_RED));
+                }
 
+                if !summaries.is_empty() {
                     ui.label(RichText::new("✨ Resúmenes generados").size(13.0).color(TEXT_PRIMARY).strong());
                     ui.add_space(8.0);
 
                     for summary in &summaries {
-                        // Skip empty summaries
-                        if summary.content.trim().is_empty() {
-                            eprintln!("[ui] Resumen vacío para template '{}' - skipping", summary.template);
+                        // Skip empty summaries but show error indicator
+                        if summary.content.trim().is_empty() || summary.content.starts_with("ERROR:") {
+                            let error_msg = if summary.content.starts_with("ERROR:") {
+                                summary.content.clone()
+                            } else {
+                                format!("ERROR: Resumen '{}' vacío", summary.template)
+                            };
+                            ui.label(RichText::new(&error_msg).size(11.0).color(ACCENT_RED));
                             continue;
                         }
                         let template_label = match summary.template.as_str() {

@@ -120,37 +120,91 @@ pub fn is_thinking_model(model_name: &str) -> bool {
 }
 
 /// Extract final content from thinking model response
-/// Handles responses containing 「</think>」 or similar thinking delimiters
+/// Handles responses containing </think> or similar thinking delimiters
 pub fn extract_thinking_content(response: &str) -> (String, Option<String>) {
-    // Common patterns for thinking delimiters
-    let thinking_patterns = ["<think>", "<think>", "<thinking>", "]~b]"];
+    eprintln!(
+        "[summarization] Extracting thinking from {} chars",
+        response.len()
+    );
 
-    let end_patterns = ["</think>", "</think>", "</thinking>", "]~b]"];
+    // Common patterns for thinking delimiters
+    let thinking_patterns = ["<think>", "<thinking>", "[思考开始]", "【思考】"];
+    let end_patterns = ["</think>", "</thinking>", "[思考结束]", "【/思考】"];
 
     // Try to find thinking blocks
-    for start_pattern in &thinking_patterns {
+    for (i, start_pattern) in thinking_patterns.iter().enumerate() {
         if let Some(start_idx) = response.find(start_pattern) {
-            // Find the end pattern after start
-            for end_pattern in &end_patterns {
-                if let Some(end_idx) = response.find(end_pattern) {
-                    if end_idx > start_idx + start_pattern.len() {
-                        // Extract thinking content
-                        let thinking =
-                            response[start_idx + start_pattern.len()..end_idx].to_string();
+            eprintln!(
+                "[summarization] Found thinking start pattern '{}' at index {}",
+                start_pattern, start_idx
+            );
 
-                        // Build final content (everything before thinking + everything after)
-                        let before = &response[..start_idx];
-                        let after = &response[end_idx + end_pattern.len()..];
-                        let final_content = format!("{}{}", before, after).trim().to_string();
+            // Find the corresponding end pattern after start
+            let end_pattern = end_patterns.get(i).copied().unwrap_or("</think>");
 
-                        return (final_content, Some(thinking));
-                    }
+            if let Some(end_idx) = response[start_idx + start_pattern.len()..].find(end_pattern) {
+                let actual_end_idx = start_idx + start_pattern.len() + end_idx;
+                eprintln!(
+                    "[summarization] Found thinking end at index {}",
+                    actual_end_idx
+                );
+
+                // Extract thinking content
+                let thinking_start = start_idx + start_pattern.len();
+                let thinking = response[thinking_start..actual_end_idx].to_string();
+
+                // Build final content (everything before thinking + everything after)
+                let before = &response[..start_idx];
+                let after_end = actual_end_idx + end_pattern.len();
+                let after = if after_end < response.len() {
+                    &response[after_end..]
+                } else {
+                    ""
+                };
+                let final_content = format!("{}{}", before, after).trim().to_string();
+
+                eprintln!(
+                    "[summarization] Extracted {} chars of thinking, {} chars of final content",
+                    thinking.len(),
+                    final_content.len()
+                );
+
+                return (final_content, Some(thinking));
+            } else {
+                eprintln!(
+                    "[summarization] Found start pattern but no end pattern '{}'",
+                    end_pattern
+                );
+            }
+        }
+    }
+
+    // No thinking block found - check if response contains only thinking-like content
+    // Some models output thinking without proper delimiters
+    eprintln!("[summarization] No standard thinking delimiters found");
+
+    // Check for common patterns that indicate thinking content
+    let lines: Vec<&str> = response.lines().collect();
+    if lines.len() > 5 {
+        // Look for separator lines like "---" or blank lines that might separate thinking from content
+        for (i, line) in lines.iter().enumerate() {
+            if line.trim() == "---" || line.trim().is_empty() {
+                // Check if there's substantial content after this separator
+                let after: String = lines[i + 1..].join("\n");
+                if after.trim().len() > 50 {
+                    eprintln!(
+                        "[summarization] Found separator at line {}, using content after",
+                        i
+                    );
+                    let thinking = lines[..i].join("\n");
+                    return (after.trim().to_string(), Some(thinking));
                 }
             }
         }
     }
 
     // No thinking block found, return original as final content
+    eprintln!("[summarization] No thinking detected, returning full response as content");
     (response.trim().to_string(), None)
 }
 
@@ -162,10 +216,22 @@ pub fn generate_summary(
     model_name: &str,
     custom_prompt: Option<&str>,
 ) -> Result<SummaryResult> {
+    eprintln!(
+        "[summarization] Starting summary generation for template: {:?}",
+        template
+    );
+    eprintln!(
+        "[summarization] Transcript length: {} chars",
+        transcript.len()
+    );
+    eprintln!("[summarization] Using model: {}", model_name);
+
     let prompt = build_summary_prompt(transcript, template, custom_prompt);
+    eprintln!("[summarization] Prompt built ({} chars)", prompt.len());
 
     // Check if we should use streaming
     let use_streaming = ollama_client.supports_streaming();
+    eprintln!("[summarization] Streaming supported: {}", use_streaming);
 
     let response = if use_streaming {
         // For streaming, we'll collect the final response
@@ -175,12 +241,52 @@ pub fn generate_summary(
         ollama_client.generate_non_streaming(&prompt, model_name)?
     };
 
+    eprintln!(
+        "[summarization] Raw response received: {} chars",
+        response.len()
+    );
+    eprintln!(
+        "[summarization] Raw response preview: '{}'",
+        response
+            .chars()
+            .take(100)
+            .collect::<String>()
+            .replace('\n', " ")
+    );
+
     let is_thinking = is_thinking_model(model_name);
+    eprintln!("[summarization] Is thinking model: {}", is_thinking);
+
     let (content, raw_thinking) = if is_thinking {
+        eprintln!("[summarization] Extracting thinking content...");
         extract_thinking_content(&response)
     } else {
         (response.trim().to_string(), None)
     };
+
+    eprintln!(
+        "[summarization] Final content length: {} chars",
+        content.len()
+    );
+    if content.len() > 0 {
+        eprintln!(
+            "[summarization] Final content preview: '{}'",
+            content
+                .chars()
+                .take(100)
+                .collect::<String>()
+                .replace('\n', " ")
+        );
+    } else {
+        eprintln!("[summarization] WARNING: Final content is EMPTY!");
+    }
+
+    if let Some(ref thinking) = raw_thinking {
+        eprintln!(
+            "[summarization] Thinking content extracted: {} chars",
+            thinking.len()
+        );
+    }
 
     Ok(SummaryResult {
         content,

@@ -80,6 +80,12 @@ impl OllamaClient {
 
     /// Generate non-streaming response
     pub fn generate_non_streaming(&self, prompt: &str, model: &str) -> Result<String> {
+        eprintln!(
+            "[ollama] Generating with model: {} (prompt length: {} chars)",
+            model,
+            prompt.len()
+        );
+
         let body = serde_json::json!({
             "model": model,
             "stream": false,
@@ -91,10 +97,17 @@ impl OllamaClient {
             }
         });
 
+        eprintln!(
+            "[ollama] Sending request to {}/api/generate",
+            self.base_url()
+        );
+
         let response = ureq::post(&format!("{}/api/generate", self.base_url()))
             .timeout(std::time::Duration::from_secs(300))
             .send_json(body)
             .context("Failed to connect to Ollama")?;
+
+        eprintln!("[ollama] Response received, parsing...");
 
         #[derive(Deserialize)]
         struct GenerateResponse {
@@ -104,6 +117,20 @@ impl OllamaClient {
         let gen_response: GenerateResponse = response
             .into_json()
             .context("Invalid response from Ollama")?;
+
+        let resp_len = gen_response.response.len();
+        eprintln!("[ollama] Response parsed successfully: {} chars", resp_len);
+
+        if resp_len == 0 {
+            return Err(anyhow::anyhow!("Ollama returned empty response"));
+        }
+
+        // Log first 200 chars for debugging
+        let preview: String = gen_response.response.chars().take(200).collect();
+        eprintln!(
+            "[ollama] Response preview: '{}'",
+            preview.replace('\n', " ")
+        );
 
         Ok(gen_response.response)
     }

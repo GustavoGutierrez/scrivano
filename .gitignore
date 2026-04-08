@@ -16,3 +16,6 @@ packaging/meet-whisperer_*/
 
 # Local IDE / agent tool settings (machine-specific paths)
 .claude/settings.local.json
+
+
+*.prompt.md
