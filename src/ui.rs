@@ -1,4 +1,4 @@
-//! UI module for MeetWhisperer desktop application.
+//! UI module for Scrivano desktop application.
 
 use std::{
     sync::{
@@ -99,6 +99,8 @@ const ICON_FOLDER: &str = icons::FOLDER;
 const ICON_CLOCK: &str = icons::CLOCK;
 const ICON_MIC: &str = icons::MICROPHONE;
 const ICON_SOUND: &str = icons::SPEAKER_HIGH;
+const ICON_INFO: &str = icons::INFO;
+const ICON_TAG: &str = icons::TAG;
 
 // ── App struct ────────────────────────────────────────────────────────────────
 
@@ -169,6 +171,9 @@ pub struct App {
     // ── Smooth spectrum animation ──────────────────────────────────────────
     spectrum_bars: Vec<f32>, // smoothed bar values for animation
     spectrum_peak: Vec<f32>, // peak hold values
+    // ── Stopping delay ───────────────────────────────────────────────────────
+    is_stopping: bool, // true when waiting to stop recording
+    stop_requested_time: Option<std::time::Instant>, // when stop was requested
 }
 
 impl App {
@@ -283,6 +288,8 @@ impl App {
             summary_generation_complete: Arc::new(AtomicBool::new(false)),
             spectrum_bars: vec![0.0; 48], // 48 bars for smooth spectrum
             spectrum_peak: vec![0.0; 48], // peak hold values
+            is_stopping: false,
+            stop_requested_time: None,
         }
     }
 
@@ -347,6 +354,7 @@ impl eframe::App for App {
         });
 
         // Keep repainting at 60fps while recording / processing / playing audio for smooth animations
+        // or when stopping to show countdown
         #[cfg(feature = "audio-playback")]
         let is_playing_audio = self
             .audio_player
@@ -356,7 +364,8 @@ impl eframe::App for App {
         #[cfg(not(feature = "audio-playback"))]
         let is_playing_audio = false;
 
-        let needs_smooth_animation = self.recording.load(Ordering::SeqCst) || is_playing_audio;
+        let needs_smooth_animation =
+            self.recording.load(Ordering::SeqCst) || is_playing_audio || self.is_stopping;
         if needs_smooth_animation {
             // 60fps for smooth spectrum animation
             ctx.request_repaint_after(Duration::from_millis(16));
@@ -399,7 +408,7 @@ impl eframe::App for App {
                 for (tab, label, icon) in [
                     (Tab::Recording, "Grabación", ICON_RECORD),
                     (Tab::Settings, "Configuración", ICON_SETTINGS),
-                    (Tab::About, "Acerca de", "?"),
+                    (Tab::About, "Acerca de", ICON_INFO),
                 ] {
                     let active = self.active_tab == tab;
                     let (bg, fg) = if active {
@@ -545,6 +554,35 @@ impl App {
                     };
                     ui.painter().rect_filled(fill_rect, 4.0, bar_color);
                 }
+            } else if self.is_stopping {
+                // Mostrar botón deshabilitado mientras esperamos el delay
+                let elapsed = self
+                    .stop_requested_time
+                    .map(|t| t.elapsed().as_secs())
+                    .unwrap_or(0);
+                let btn = egui::Button::new(
+                    RichText::new(format!("⏳  Deteniendo... ({}s)", 3 - elapsed.min(3)))
+                        .size(20.0)
+                        .color(Color32::WHITE),
+                )
+                .fill(Color32::from_rgb(150, 60, 60))
+                .stroke(Stroke::new(2.0, ACCENT_RED_HOVER))
+                .rounding(10.0)
+                .sense(egui::Sense::hover()); // Deshabilitado
+
+                ui.add_sized(egui::vec2(320.0, 64.0), btn);
+
+                // Verificar si ya pasaron 3 segundos
+                if self
+                    .stop_requested_time
+                    .map(|t| t.elapsed().as_secs() >= 3)
+                    .unwrap_or(true)
+                {
+                    // Resetear estado y detener
+                    self.is_stopping = false;
+                    self.stop_requested_time = None;
+                    self.stop_and_transcribe();
+                }
             } else if is_recording {
                 let btn = egui::Button::new(
                     RichText::new(format!("{}  Detener y transcribir", ICON_STOP))
@@ -556,11 +594,14 @@ impl App {
                 .rounding(10.0);
 
                 if ui.add_sized(egui::vec2(320.0, 64.0), btn).clicked() {
+                    // Guardar duración actual
                     self.last_recording_duration = self
                         .recording_start
                         .map(|s| s.elapsed().as_secs_f64())
                         .unwrap_or(0.0);
-                    self.stop_and_transcribe();
+                    // Iniciar delay de 3 segundos
+                    self.is_stopping = true;
+                    self.stop_requested_time = Some(std::time::Instant::now());
                 }
             } else {
                 let btn = egui::Button::new(
@@ -1065,7 +1106,7 @@ impl App {
                                 if !t.is_empty() {
                                     ui.add_space(4.0);
                                     ui.label(
-                                        RichText::new(format!("🏷️ {}", t))
+                                        RichText::new(format!("{} {}", ICON_TAG, t))
                                             .size(10.0)
                                             .color(ACCENT_BLUE),
                                     );
@@ -1075,7 +1116,7 @@ impl App {
 
                         if entry.ollama_used {
                             ui.add_space(6.0);
-                            ui.label(RichText::new("✨").size(11.0).color(ACCENT_PURPLE));
+                            ui.label(RichText::new(ICON_MAGIC).size(11.0).color(ACCENT_PURPLE));
                         }
                     });
 
@@ -1159,7 +1200,7 @@ impl App {
                     // Export audio
                     ui.menu_button("🎵 Audio", |ui| {
                         ui.set_min_width(140.0);
-                        if ui.button("🎵 WAV (原始)").clicked() {
+                            if ui.button(format!("{} WAV", ICON_AUDIO)).clicked() {
                             self.export_recording_audio(entry, "wav");
                             ui.close_menu();
                         }
@@ -1191,7 +1232,7 @@ impl App {
                         let has_transcript_content = std::fs::read_to_string(&entry.filepath)
                             .map(|content| !content.trim().is_empty() && content != "Grabando...")
                             .unwrap_or(false);
-                        
+
                         if !has_transcript_content {
                             ui.label(RichText::new("⚠️ Transcripción vacía - no se puede generar resumen")
                                 .size(11.0)
@@ -1268,10 +1309,10 @@ impl App {
                     ui.add_space(16.0);
                     ui.separator();
                     ui.add_space(8.0);
-                    
+
                     ui.label(RichText::new("✨ Resúmenes generados").size(13.0).color(TEXT_PRIMARY).strong());
                     ui.add_space(8.0);
-                    
+
                     for summary in &summaries {
                         // Skip empty summaries
                         if summary.content.trim().is_empty() {
@@ -1286,9 +1327,9 @@ impl App {
                             "decisions" => "📝 Decisiones",
                             _ => &summary.template,
                         };
-                        
+
                         egui::CollapsingHeader::new(
-                            RichText::new(format!("{} (via {})", template_label, 
+                            RichText::new(format!("{} (via {})", template_label,
                                 summary.model_name.as_deref().unwrap_or("Ollama")))
                                 .size(12.0)
                                 .color(ACCENT_BLUE)
@@ -1296,7 +1337,7 @@ impl App {
                         .default_open(false)
                         .show(ui, |ui| {
                             ui.add_space(4.0);
-                            
+
                             // Show thinking block if available and user wants to see it
                             if summary.is_thinking_model && summary.raw_thinking.is_some() {
                                 if self.settings.summary_thinking_policy == "show_for_debug" {
@@ -1312,7 +1353,7 @@ impl App {
                                     ui.add_space(8.0);
                                 }
                             }
-                            
+
                             // Show summary content
                             let mut content = summary.content.clone();
                             ui.add_sized(
@@ -1322,7 +1363,7 @@ impl App {
                                     .text_color(TEXT_PRIMARY)
                             );
                             ui.add_space(8.0);
-                            
+
                             // Copy button
                             if ui.button("📋 Copiar al portapapeles").clicked() {
                                 ui.output_mut(|o| o.copied_text = summary.content.clone());
@@ -2705,7 +2746,7 @@ impl App {
                 ui.vertical_centered(|ui| {
                     // App name with gradient-like effect using two labels
                     ui.label(
-                        RichText::new("MeetWhisperer")
+                        RichText::new("Scrivano")
                             .size(32.0)
                             .strong()
                             .color(TEXT_PRIMARY),
