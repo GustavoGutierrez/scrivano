@@ -229,6 +229,73 @@ where
     Ok(cleaned)
 }
 
+/// Generate text using Ollama with a simple prompt (no transcript wrapping)
+/// Used for title and tag generation
+pub fn generate_text<F>(model: &str, prompt: &str, progress_cb: F) -> Result<String>
+where
+    F: Fn(i32) + Send + Sync + 'static,
+{
+    let body = serde_json::json!({
+        "model": model,
+        "stream": false,
+        "think": false,
+        "messages": [
+            { "role": "user", "content": prompt }
+        ],
+        "options": {
+            "temperature": 0.3,
+            "top_p": 0.9,
+            "num_predict": 256
+        }
+    });
+
+    // Shared flag: progress thread increments 0→90 over ~10 s until HTTP returns.
+    let done_flag = Arc::new(AtomicI32::new(0));
+    let done_thread = Arc::clone(&done_flag);
+    let progress_cb = Arc::new(progress_cb);
+    let progress_thread = Arc::clone(&progress_cb);
+
+    std::thread::spawn(move || {
+        for pct in (10..=90_i32).step_by(10) {
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            if done_thread.load(Ordering::SeqCst) != 0 {
+                break;
+            }
+            progress_thread(pct);
+        }
+    });
+
+    let response = ureq::post(&format!("{}/api/chat", OLLAMA_BASE))
+        .timeout(std::time::Duration::from_secs(60))
+        .send_json(body)
+        .context("No se pudo conectar con Ollama")?;
+
+    let chat: ChatResponse = response
+        .into_json()
+        .context("Respuesta de Ollama inválida")?;
+
+    done_flag.store(1, Ordering::SeqCst);
+    progress_cb(100);
+
+    let cleaned = chat.message.content.trim().to_string();
+
+    // Clean up common prefixes/suffixes that models might add
+    let cleaned = cleaned
+        .trim_start_matches("Título: ")
+        .trim_start_matches("título: ")
+        .trim_start_matches("Tags: ")
+        .trim_start_matches("tags: ")
+        .trim()
+        .to_string();
+
+    if cleaned.is_empty() {
+        return Err(anyhow::anyhow!("Ollama returned empty response"));
+    }
+
+    eprintln!("[ollama] Generated text: {} chars", cleaned.len());
+    Ok(cleaned)
+}
+
 // ── Prompt ────────────────────────────────────────────────────────────────────
 
 fn build_system_prompt(custom_prompt: Option<&str>) -> String {

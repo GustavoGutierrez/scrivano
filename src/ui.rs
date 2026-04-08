@@ -2122,16 +2122,11 @@ impl App {
 
                                 // Generate title
                                 let title_prompt = format!(
-                                    "Genera un título corto (máximo 6 palabras) que resuma el siguiente texto de una reunión. Solo responde con el título, nada más:\n\n{}",
-                                    &final_text[..final_text.len().min(2000)]
+                                    "Genera un título corto (máximo 6 palabras) que resuma la siguiente reunión. Solo responde con el título, sin comillas, sin explicaciones:\n\n{}",
+                                    &final_text[..final_text.len().min(1500)]
                                 );
 
-                                match ollama::improve_transcript(
-                                    &ollama_model,
-                                    &title_prompt,
-                                    |_| {},
-                                    None,
-                                ) {
+                                match ollama::generate_text(&ollama_model, &title_prompt, |_| {}) {
                                     Ok(title) => {
                                         let clean_title =
                                             title.trim().replace('"', "").replace('\n', " ");
@@ -2139,15 +2134,14 @@ impl App {
 
                                         // Generate tags
                                         let tags_prompt = format!(
-                                            "Analiza el siguiente texto y genera exactamente 5 tags separados por comas que describan: 1) El sentimiento general, 2-4) Los temas principales discutidos, 5) El tipo de reunión. Solo responde con los 5 tags separados por comas, nada más:\n\n{}",
-                                            &final_text[..final_text.len().min(3000)]
+                                            "Genera exactamente 5 palabras clave (tags) separadas por comas para esta reunión. Los tags deben describir: sentimiento, 3 temas principales, tipo de reunión. Solo las 5 palabras separadas por comas, sin explicaciones:\n\n{}",
+                                            &final_text[..final_text.len().min(1500)]
                                         );
 
-                                        match ollama::improve_transcript(
+                                        match ollama::generate_text(
                                             &ollama_model,
                                             &tags_prompt,
                                             |_| {},
-                                            None,
                                         ) {
                                             Ok(tags) => {
                                                 let clean_tags = tags
