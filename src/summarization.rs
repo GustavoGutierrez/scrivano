@@ -216,23 +216,31 @@ pub fn generate_summary(
     model_name: &str,
     custom_prompt: Option<&str>,
 ) -> Result<SummaryResult> {
+    eprintln!("[summarization] ===== GENERATE_SUMMARY START =====");
     eprintln!(
-        "[summarization] Starting summary generation for template: {:?}",
-        template
-    );
-    eprintln!(
-        "[summarization] Transcript length: {} chars",
+        "[summarization] Template: {:?}, Model: {}, Transcript: {} chars",
+        template,
+        model_name,
         transcript.len()
     );
-    eprintln!("[summarization] Using model: {}", model_name);
+    eprintln!("[summarization] Custom prompt: {:?}", custom_prompt);
 
     let prompt = build_summary_prompt(transcript, template, custom_prompt);
     eprintln!("[summarization] Prompt built ({} chars)", prompt.len());
+    eprintln!(
+        "[summarization] Prompt preview: '{}'",
+        prompt
+            .chars()
+            .take(150)
+            .collect::<String>()
+            .replace('\n', " ")
+    );
 
     // Check if we should use streaming
     let use_streaming = ollama_client.supports_streaming();
     eprintln!("[summarization] Streaming supported: {}", use_streaming);
 
+    eprintln!("[summarization] Calling Ollama API...");
     let response = if use_streaming {
         // For streaming, we'll collect the final response
         // Note: Full streaming implementation would be more complex
@@ -241,15 +249,16 @@ pub fn generate_summary(
         ollama_client.generate_non_streaming(&prompt, model_name)?
     };
 
+    eprintln!("[summarization] ===== OLLAMA RESPONSE =====");
     eprintln!(
-        "[summarization] Raw response received: {} chars",
+        "[summarization] Raw response length: {} chars",
         response.len()
     );
     eprintln!(
         "[summarization] Raw response preview: '{}'",
         response
             .chars()
-            .take(100)
+            .take(200)
             .collect::<String>()
             .replace('\n', " ")
     );
@@ -261,14 +270,16 @@ pub fn generate_summary(
         eprintln!("[summarization] Extracting thinking content...");
         extract_thinking_content(&response)
     } else {
+        eprintln!("[summarization] Not a thinking model, using raw response");
         (response.trim().to_string(), None)
     };
 
+    eprintln!("[summarization] ===== EXTRACTION RESULT =====");
     eprintln!(
         "[summarization] Final content length: {} chars",
         content.len()
     );
-    if content.len() > 0 {
+    if !content.is_empty() {
         eprintln!(
             "[summarization] Final content preview: '{}'",
             content
@@ -283,10 +294,12 @@ pub fn generate_summary(
 
     if let Some(ref thinking) = raw_thinking {
         eprintln!(
-            "[summarization] Thinking content extracted: {} chars",
+            "[summarization] Thinking extracted: {} chars",
             thinking.len()
         );
     }
+
+    eprintln!("[summarization] ===== GENERATE_SUMMARY END =====");
 
     Ok(SummaryResult {
         content,

@@ -89,6 +89,7 @@ impl OllamaClient {
         let body = serde_json::json!({
             "model": model,
             "stream": false,
+            "think": false,  // Disable thinking for models like qwen3.5, deepseek-r1, etc.
             "prompt": prompt,
             "options": {
                 "temperature": 0.3,

@@ -383,9 +383,11 @@ impl eframe::App for App {
 
         // Reload summaries when generation completes
         if self.summary_generation_complete.load(Ordering::SeqCst) {
+            eprintln!("[ui] ===== SUMMARY GENERATION COMPLETE FLAG DETECTED =====");
             self.summary_generation_complete
                 .store(false, Ordering::SeqCst);
             // Clear summaries cache to force reload on next view
+            eprintln!("[ui] Clearing summaries cache...");
             self.summaries_cache.clear();
             eprintln!("[ui] Resúmenes recargados tras generación");
             // Request immediate repaint to show updated summaries
@@ -1029,6 +1031,10 @@ impl App {
     fn show_recording_row_expanded(&mut self, ui: &mut egui::Ui, entry: &RecordingEntry) {
         // Load summaries if not cached
         if !self.summaries_cache.contains_key(&entry.id) {
+            eprintln!(
+                "[ui] Cache miss para recording {}, cargando desde BD...",
+                entry.id
+            );
             if let Some(db) = &self.db {
                 match db.get_summaries_by_recording(entry.id) {
                     Ok(summaries) => {
@@ -1037,6 +1043,18 @@ impl App {
                             summaries.len(),
                             entry.id
                         );
+                        for s in &summaries {
+                            eprintln!(
+                                "[ui]   - {}:{} chars, content preview: '{}'",
+                                s.template,
+                                s.content.len(),
+                                s.content
+                                    .chars()
+                                    .take(50)
+                                    .collect::<String>()
+                                    .replace('\n', " ")
+                            );
+                        }
                         self.summaries_cache.insert(entry.id, summaries);
                     }
                     Err(e) => {
@@ -1046,9 +1064,18 @@ impl App {
                         );
                     }
                 }
+
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("El modelo generará resúmenes automáticamente.")
+                        .size(11.0)
+                        .color(TEXT_MUTED),
+                );
             } else {
                 eprintln!("[ui] No hay conexión a DB para cargar resúmenes");
             }
+        } else {
+            eprintln!("[ui] Cache hit para recording {}", entry.id);
         }
         let summaries = self
             .summaries_cache
@@ -1763,8 +1790,14 @@ impl App {
     }
 
     fn generate_summary_for_recording(&mut self, recording_id: i64, template: &str) {
+        eprintln!("[summary] ===== INICIANDO GENERACIÓN =====");
+        eprintln!(
+            "[summary] Recording ID: {}, Template: {}",
+            recording_id, template
+        );
+
         if !self.ollama_available {
-            eprintln!("[summary] Ollama no está disponible");
+            eprintln!("[summary] ERROR: Ollama no está disponible");
             return;
         }
 
@@ -1774,9 +1807,14 @@ impl App {
             .find(|e| e.id == recording_id)
             .cloned();
         if let Some(entry) = entry {
+            eprintln!(
+                "[summary] Found entry: {} ({})",
+                entry.filename, entry.filepath
+            );
             let transcript = std::fs::read_to_string(&entry.filepath).unwrap_or_default();
+            eprintln!("[summary] Transcript length: {} chars", transcript.len());
             if transcript.is_empty() {
-                eprintln!("[summary] Transcripción vacía");
+                eprintln!("[summary] ERROR: Transcripción vacía");
                 return;
             }
 
@@ -1866,15 +1904,38 @@ impl App {
 
                 match result {
                     Ok(summary_result) => {
+                        eprintln!("[summary] ===== RESUMEN GENERADO =====");
                         eprintln!(
-                            "[summary] {} generated for recording {}: {} chars",
-                            template_string,
-                            recording_id_copy,
+                            "[summary] Template: {}, Recording: {}",
+                            template_string, recording_id_copy
+                        );
+                        eprintln!(
+                            "[summary] Content length: {} chars",
                             summary_result.content.len()
                         );
+                        eprintln!(
+                            "[summary] Content preview: '{}'",
+                            summary_result
+                                .content
+                                .chars()
+                                .take(100)
+                                .collect::<String>()
+                                .replace('\n', " ")
+                        );
+                        eprintln!(
+                            "[summary] Is thinking model: {}, Has raw_thinking: {}",
+                            summary_result.is_thinking_model,
+                            summary_result.raw_thinking.is_some()
+                        );
+
+                        if summary_result.content.is_empty() {
+                            eprintln!("[summary] WARNING: Content is EMPTY!");
+                        }
 
                         // Save summary to database
+                        eprintln!("[summary] Opening database at {:?}", db_path);
                         if let Ok(db) = Database::open(&db_path) {
+                            eprintln!("[summary] Database opened successfully");
                             match db.insert_summary(
                                 recording_id_copy,
                                 &template_string,
@@ -1883,17 +1944,20 @@ impl App {
                                 summary_result.is_thinking_model,
                                 summary_result.raw_thinking.as_deref(),
                             ) {
-                                Ok(_) => {
-                                    eprintln!("[summary] Guardado en base de datos exitosamente");
+                                Ok(id) => {
+                                    eprintln!("[summary] Guardado en BD exitosamente, ID: {}", id);
                                 }
                                 Err(e) => {
-                                    eprintln!("[summary] Error guardando en DB: {}", e);
+                                    eprintln!("[summary] ERROR guardando en BD: {}", e);
                                 }
                             }
+                        } else {
+                            eprintln!("[summary] ERROR: No se pudo abrir la base de datos");
                         }
                     }
                     Err(e) => {
-                        eprintln!("[summary] Error generando resumen: {:?}", e);
+                        eprintln!("[summary] ===== ERROR GENERANDO RESUMEN =====");
+                        eprintln!("[summary] Error: {:?}", e);
                     }
                 }
 
@@ -1907,8 +1971,15 @@ impl App {
                         }
                     }
                 }
+                eprintln!("[summary] Setting complete flag to trigger UI reload");
                 complete_flag.store(true, Ordering::SeqCst);
+                eprintln!("[summary] ===== THREAD COMPLETE =====");
             });
+        } else {
+            eprintln!(
+                "[summary] ERROR: No se encontró la grabación con ID {}",
+                recording_id
+            );
         }
     }
 
