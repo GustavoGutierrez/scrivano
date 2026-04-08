@@ -379,6 +379,8 @@ impl eframe::App for App {
             // Clear summaries cache to force reload on next view
             self.summaries_cache.clear();
             eprintln!("[ui] Resúmenes recargados tras generación");
+            // Request immediate repaint to show updated summaries
+            ctx.request_repaint();
         }
 
         // Sync shared transcript → local editable copy when idle
@@ -987,9 +989,24 @@ impl App {
         // Load summaries if not cached
         if !self.summaries_cache.contains_key(&entry.id) {
             if let Some(db) = &self.db {
-                if let Ok(summaries) = db.get_summaries_by_recording(entry.id) {
-                    self.summaries_cache.insert(entry.id, summaries);
+                match db.get_summaries_by_recording(entry.id) {
+                    Ok(summaries) => {
+                        eprintln!(
+                            "[ui] Cargados {} resúmenes para recording {}",
+                            summaries.len(),
+                            entry.id
+                        );
+                        self.summaries_cache.insert(entry.id, summaries);
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[ui] Error cargando resúmenes para recording {}: {}",
+                            entry.id, e
+                        );
+                    }
                 }
+            } else {
+                eprintln!("[ui] No hay conexión a DB para cargar resúmenes");
             }
         }
         let summaries = self
@@ -1256,6 +1273,11 @@ impl App {
                     ui.add_space(8.0);
                     
                     for summary in &summaries {
+                        // Skip empty summaries
+                        if summary.content.trim().is_empty() {
+                            eprintln!("[ui] Resumen vacío para template '{}' - skipping", summary.template);
+                            continue;
+                        }
                         let template_label = match summary.template.as_str() {
                             "executive" => "📋 Ejecutivo",
                             "complete" => "📄 Completo",
