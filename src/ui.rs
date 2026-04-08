@@ -227,7 +227,7 @@ impl App {
         // ── Database ──────────────────────────────────────────────────────────
         let db_path = dirs::config_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("meet-whisperer")
+            .join("Scrivano")
             .join("recordings.db");
         // Ensure the config directory exists before SQLite tries to create the file
         if let Some(parent) = db_path.parent() {
@@ -1418,16 +1418,17 @@ impl App {
                                 .color(TEXT_MUTED));
                         } else {
                             let player = self.audio_player.as_ref();
-                            let elapsed = player.map(|p| {
-                                if p.is_playing() || p.is_paused() {
-                                    p.get_elapsed_secs()
-                                } else {
-                                    0.0
-                                }
-                            }).unwrap_or(0.0);
-                            let total = entry.duration_secs;
                             let is_playing = player.map(|p| p.is_playing()).unwrap_or(false);
+                            let is_paused = player.map(|p| p.is_paused()).unwrap_or(false);
                             let is_current_item = self.current_playing_id == Some(entry.id);
+                            
+                            // Only calculate elapsed time for the currently playing item
+                            let elapsed = if is_current_item && (is_playing || is_paused) {
+                                player.map(|p| p.get_elapsed_secs()).unwrap_or(0.0)
+                            } else {
+                                0.0
+                            };
+                            let total = entry.duration_secs;
 
                             // All controls in a single horizontal row
                             ui.horizontal(|ui| {
@@ -1625,7 +1626,7 @@ impl App {
         // Load segments and highlights from database for SRT/VTT/JSON
         let db_path = dirs::config_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("meet-whisperer")
+            .join("Scrivano")
             .join("recordings.db");
 
         let (segments, highlights) = if let Ok(db) = Database::open(&db_path) {
@@ -1844,7 +1845,7 @@ impl App {
             let model_clone = model.to_string();
             let db_path = dirs::config_dir()
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join("meet-whisperer")
+                .join("Scrivano")
                 .join("recordings.db");
             let generating_clone = self.generating_summaries.clone();
             let complete_flag = self.summary_generation_complete.clone();
@@ -1962,7 +1963,7 @@ impl App {
         // DB path for inserting the new entry
         let db_path = dirs::config_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("meet-whisperer")
+            .join("Scrivano")
             .join("recordings.db");
 
         is_transcribing.store(true, Ordering::SeqCst);
