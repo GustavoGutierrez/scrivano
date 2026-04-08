@@ -17,11 +17,13 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-22.04
+            os: ubuntu-20.04
             artifact: scrivano-x86_64-unknown-linux-gnu
+            rustflags: "-C target-cpu=x86-64"
           - target: aarch64-apple-darwin
             os: macos-14
             artifact: scrivano-aarch64-apple-darwin
+            rustflags: ""
 
     runs-on: ${{ matrix.os }}
 
@@ -71,6 +73,8 @@ jobs:
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build release
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
         run: |
           cargo build --release --features "audio-playback" --target ${{ matrix.target }}
 
