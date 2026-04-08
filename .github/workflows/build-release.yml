@@ -17,13 +17,14 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             artifact: scrivano-x86_64-unknown-linux-gnu
             rustflags: "-C target-cpu=x86-64"
-          - target: aarch64-apple-darwin
-            os: macos-14
-            artifact: scrivano-aarch64-apple-darwin
-            rustflags: ""
+          # macOS temporalmente deshabilitado - habilitar cuando Linux funcione
+          # - target: aarch64-apple-darwin
+          #   os: macos-14
+          #   artifact: scrivano-aarch64-apple-darwin
+          #   rustflags: ""
 
     runs-on: ${{ matrix.os }}
 
@@ -129,11 +130,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload macOS binary to Release
-        if: success()
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/scrivano-macos-arm64
-          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # macOS temporalmente deshabilitado
+      # - name: Upload macOS binary to Release
+      #   if: success()
+      #   uses: softprops/action-gh-release@v2
+      #   with:
+      #     files: artifacts/scrivano-macos-arm64
+      #     tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
