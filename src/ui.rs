@@ -300,6 +300,42 @@ impl App {
         self.recordings_dirty.store(false, Ordering::SeqCst);
     }
 
+    fn refresh_audio_devices(&mut self) {
+        let current_input_id = self
+            .input_devices
+            .get(self.selected_input_index)
+            .map(|(_, id)| id.clone())
+            .or_else(|| self.settings.input_device_id.clone());
+
+        let current_output_id = self
+            .output_devices
+            .get(self.selected_output_index)
+            .map(|(_, id)| id.clone())
+            .or_else(|| self.settings.output_device_id.clone());
+
+        self.input_devices = get_input_devices()
+            .into_iter()
+            .map(|d| (d.name, d.id))
+            .collect();
+
+        self.output_devices = get_output_devices()
+            .into_iter()
+            .map(|d| (d.name, d.id))
+            .collect();
+
+        self.selected_input_index = current_input_id
+            .as_ref()
+            .and_then(|id| self.input_devices.iter().position(|(_, did)| did == id))
+            .unwrap_or(0)
+            .min(self.input_devices.len().saturating_sub(1));
+
+        self.selected_output_index = current_output_id
+            .as_ref()
+            .and_then(|id| self.output_devices.iter().position(|(_, did)| did == id))
+            .unwrap_or(0)
+            .min(self.output_devices.len().saturating_sub(1));
+    }
+
     fn add_highlight_during_recording(&mut self, label: Option<String>) {
         if self.recording.load(Ordering::SeqCst) {
             let timestamp = self
@@ -1335,11 +1371,11 @@ impl App {
                 ui.add_space(16.0);
                 ui.separator();
                 ui.add_space(8.0);
-                
+
                 // Check if any summary generation failed recently
                 let has_error = summaries.iter().any(|s| s.content.starts_with("ERROR:"));
                 let has_empty = summaries.iter().any(|s| s.content.trim().is_empty());
-                
+
                 if has_error {
                     ui.label(RichText::new("❌ Error generando resúmenes - revisa la terminal").size(12.0).color(ACCENT_RED));
                 } else if has_empty && !summaries.is_empty() {
@@ -1448,7 +1484,7 @@ impl App {
                             let is_playing = player.map(|p| p.is_playing()).unwrap_or(false);
                             let is_paused = player.map(|p| p.is_paused()).unwrap_or(false);
                             let is_current_item = self.current_playing_id == Some(entry.id);
-                            
+
                             // Only calculate elapsed time for the currently playing item
                             let elapsed = if is_current_item && (is_playing || is_paused) {
                                 player.map(|p| p.get_elapsed_secs()).unwrap_or(0.0)
@@ -1538,19 +1574,35 @@ impl App {
                     } else {
                         // Start playing from beginning - use .wav file
                         if std::path::Path::new(&wav_path).exists() {
-                            if let Ok(_) = player.play(&wav_path) {
-                                self.current_playing_id = Some(entry.id);
+                            match player.play(&wav_path) {
+                                Ok(_) => {
+                                    self.current_playing_id = Some(entry.id);
+                                }
+                                Err(e) => {
+                                    eprintln!("[playback] Error starting playback: {e}");
+                                }
                             }
+                        } else {
+                            eprintln!("[playback] WAV file not found: {}", wav_path);
                         }
                     }
                 } else {
                     // Play new file - use .wav file
                     if std::path::Path::new(&wav_path).exists() {
-                        if let Ok(_) = player.play(&wav_path) {
-                            self.current_playing_id = Some(entry.id);
+                        match player.play(&wav_path) {
+                            Ok(_) => {
+                                self.current_playing_id = Some(entry.id);
+                            }
+                            Err(e) => {
+                                eprintln!("[playback] Error starting playback: {e}");
+                            }
                         }
+                    } else {
+                        eprintln!("[playback] WAV file not found: {}", wav_path);
                     }
                 }
+            } else {
+                eprintln!("[playback] Audio player backend is not available");
             }
         }
     }
@@ -1993,11 +2045,19 @@ impl App {
         self.recording.store(true, Ordering::SeqCst);
         self.recording_start_timestamp = Some(chrono_local_now());
 
-        let source_name = self
+        let output_monitor = self
+            .output_devices
+            .get(self.selected_output_index)
+            .map(|(_, id)| id.clone())
+            .unwrap_or_default();
+
+        let input_source = self
             .input_devices
             .get(self.selected_input_index)
             .map(|(_, id)| id.clone())
             .unwrap_or_default();
+
+        let source_name = choose_capture_source(&input_source, &output_monitor);
 
         eprintln!("[ui] Grabando desde: {:?}", source_name);
 
@@ -2345,6 +2405,22 @@ impl App {
                     section_header(ui, "🎤  Dispositivo de entrada (Micrófono)");
                     ui.add_space(12.0);
 
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new("↻  Actualizar dispositivos").size(13.0),
+                            )
+                            .fill(Color32::from_rgb(35, 45, 60))
+                            .stroke(Stroke::new(1.0, BORDER))
+                            .rounding(6.0),
+                        )
+                        .clicked()
+                    {
+                        self.refresh_audio_devices();
+                    }
+
+                    ui.add_space(10.0);
+
                     if self.input_devices.is_empty() {
                         ui.label(
                             RichText::new("No se encontraron dispositivos de entrada")
@@ -2413,7 +2489,7 @@ impl App {
 
                     ui.label(
                     RichText::new(
-                        "  La captura del sistema usa el monitor del sink de PulseAudio/PipeWire.",
+                        "  Prioriza el micrófono seleccionado; si no está disponible usa la salida del sistema.",
                     )
                     .size(12.0)
                     .color(TEXT_MUTED),
@@ -3028,6 +3104,23 @@ fn format_vtt_timestamp(secs: f64) -> String {
     format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
 }
 
+fn choose_capture_source(input_source: &str, output_monitor: &str) -> String {
+    let input = input_source.trim();
+    let output = output_monitor.trim();
+
+    let input_usable = !input.is_empty() && input != "default" && input != "default.monitor";
+
+    if input_usable {
+        return input.to_string();
+    }
+
+    if !output.is_empty() {
+        return output.to_string();
+    }
+
+    "default".to_string()
+}
+
 fn section_header(ui: &mut egui::Ui, title: &str) {
     let frame = egui::Frame::none()
         .fill(BG_PANEL)
@@ -3175,5 +3268,31 @@ fn draw_waveform_gradient(painter: &Painter, rect: Rect, samples: &[f32]) {
             [Pos2::new(x, draw_top), Pos2::new(x, draw_bot)],
             Stroke::new(1.5, color),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::choose_capture_source;
+
+    #[test]
+    fn choose_capture_source_prefers_input() {
+        let selected = choose_capture_source(
+            "alsa_input.usb-Mic-00.analog-stereo",
+            "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor",
+        );
+        assert_eq!(selected, "alsa_input.usb-Mic-00.analog-stereo");
+    }
+
+    #[test]
+    fn choose_capture_source_falls_back_to_output_monitor() {
+        let selected = choose_capture_source("default", "alsa_output.pci.monitor");
+        assert_eq!(selected, "alsa_output.pci.monitor");
+    }
+
+    #[test]
+    fn choose_capture_source_defaults_when_empty() {
+        let selected = choose_capture_source("", "");
+        assert_eq!(selected, "default");
     }
 }

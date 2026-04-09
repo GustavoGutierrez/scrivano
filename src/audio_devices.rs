@@ -4,6 +4,10 @@
 //! using PulseAudio command-line tools.
 
 use serde::{Deserialize, Serialize};
+use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static PACTL_FAILURE_LOGGED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioDevice {
@@ -12,28 +16,158 @@ pub struct AudioDevice {
     pub is_input: bool,
 }
 
-pub fn get_input_devices() -> Vec<AudioDevice> {
-    let mut devices = Vec::new();
+fn pactl_candidates() -> Vec<String> {
+    let mut candidates = Vec::new();
 
-    if let Ok(output) = std::process::Command::new("pactl")
-        .args(["list", "short", "sources"])
-        .output()
-    {
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        for line in output_str.lines() {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 2 {
-                // parts[0] = numeric index, parts[1] = PulseAudio source name
-                let source_name = parts[1].to_string();
+    if let Ok(custom) = std::env::var("SCRIVANO_PACTL_PATH") {
+        if !custom.trim().is_empty() {
+            candidates.push(custom);
+        }
+    }
 
-                if !source_name.contains(".monitor") {
-                    devices.push(AudioDevice {
-                        name: source_name.clone(),
-                        id: source_name, // use the PA name, not the numeric index
-                        is_input: true,
-                    });
-                }
+    candidates.push("pactl".to_string());
+
+    if let Ok(snap_dir) = std::env::var("SNAP") {
+        candidates.push(format!("{}/usr/bin/pactl", snap_dir));
+    }
+
+    candidates.push("/usr/bin/pactl".to_string());
+
+    candidates
+}
+
+fn run_pactl(args: &[&str]) -> Option<String> {
+    let mut errors = Vec::new();
+
+    for candidate in pactl_candidates() {
+        let output = Command::new(&candidate).args(args).output();
+        match output {
+            Ok(out) if out.status.success() => {
+                return Some(String::from_utf8_lossy(&out.stdout).to_string());
             }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                errors.push(format!(
+                    "candidate='{}' status={} stderr='{}'",
+                    candidate, out.status, stderr
+                ));
+            }
+            Err(e) => {
+                errors.push(format!("candidate='{}' error='{}'", candidate, e));
+            }
+        }
+    }
+
+    if !errors.is_empty() && !PACTL_FAILURE_LOGGED.swap(true, Ordering::Relaxed) {
+        eprintln!(
+            "[audio_devices] pactl command failed for all candidates: {}",
+            errors.join(" | ")
+        );
+    }
+
+    None
+}
+
+fn parse_short_list_name(line: &str) -> Option<&str> {
+    let mut tab_parts = line.split('\t');
+    if let (Some(_idx), Some(name)) = (tab_parts.next(), tab_parts.next()) {
+        let name = name.trim();
+        if !name.is_empty() {
+            return Some(name);
+        }
+    }
+
+    let mut ws_parts = line.split_whitespace();
+    let _idx = ws_parts.next()?;
+    let name = ws_parts.next()?.trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn parse_input_devices(output: &str) -> Vec<AudioDevice> {
+    output
+        .lines()
+        .filter_map(parse_short_list_name)
+        .filter(|name| !name.contains(".monitor"))
+        .map(|source_name| AudioDevice {
+            name: source_name.to_string(),
+            id: source_name.to_string(),
+            is_input: true,
+        })
+        .collect()
+}
+
+fn parse_output_devices(output: &str) -> Vec<AudioDevice> {
+    output
+        .lines()
+        .filter_map(parse_short_list_name)
+        .map(|sink_name| AudioDevice {
+            name: sink_name.to_string(),
+            id: format!("{}.monitor", sink_name),
+            is_input: false,
+        })
+        .collect()
+}
+
+fn parse_default_from_info(output: &str, key: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let (k, v) = line.split_once(':')?;
+        if k.trim() == key {
+            let value = v.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        } else {
+            None
+        }
+    })
+}
+
+fn default_source_name() -> Option<String> {
+    let from_direct = run_pactl(&["get-default-source"])
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    if from_direct.is_some() {
+        return from_direct;
+    }
+
+    run_pactl(&["info"]).and_then(|v| parse_default_from_info(&v, "Default Source"))
+}
+
+fn default_sink_name() -> Option<String> {
+    let from_direct = run_pactl(&["get-default-sink"])
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    if from_direct.is_some() {
+        return from_direct;
+    }
+
+    run_pactl(&["info"]).and_then(|v| parse_default_from_info(&v, "Default Sink"))
+}
+
+pub fn get_input_devices() -> Vec<AudioDevice> {
+    let mut devices = run_pactl(&["list", "short", "sources"])
+        .map(|v| parse_input_devices(&v))
+        .unwrap_or_default();
+
+    if devices.is_empty() {
+        devices = run_pactl(&["list", "sources", "short"])
+            .map(|v| parse_input_devices(&v))
+            .unwrap_or_default();
+    }
+
+    if devices.is_empty() {
+        if let Some(default_source) = default_source_name() {
+            devices.push(AudioDevice {
+                name: default_source.clone(),
+                id: default_source,
+                is_input: true,
+            });
         }
     }
 
@@ -49,33 +183,30 @@ pub fn get_input_devices() -> Vec<AudioDevice> {
 }
 
 pub fn get_output_devices() -> Vec<AudioDevice> {
-    let mut devices = Vec::new();
+    let mut devices = run_pactl(&["list", "short", "sinks"])
+        .map(|v| parse_output_devices(&v))
+        .unwrap_or_default();
 
-    if let Ok(output) = std::process::Command::new("pactl")
-        .args(["list", "short", "sinks"])
-        .output()
-    {
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        for line in output_str.lines() {
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 2 {
-                // parts[1] = PulseAudio sink name; monitor = sink_name + ".monitor"
-                let sink_name = parts[1].to_string();
-                let monitor_name = format!("{}.monitor", sink_name);
+    if devices.is_empty() {
+        devices = run_pactl(&["list", "sinks", "short"])
+            .map(|v| parse_output_devices(&v))
+            .unwrap_or_default();
+    }
 
-                devices.push(AudioDevice {
-                    name: sink_name.clone(),
-                    id: monitor_name, // capture from the monitor source
-                    is_input: false,
-                });
-            }
+    if devices.is_empty() {
+        if let Some(default_sink) = default_sink_name() {
+            devices.push(AudioDevice {
+                name: default_sink.clone(),
+                id: format!("{}.monitor", default_sink),
+                is_input: false,
+            });
         }
     }
 
     if devices.is_empty() {
         devices.push(AudioDevice {
             name: "Default (PulseAudio)".to_string(),
-            id: "default".to_string(),
+            id: "default.monitor".to_string(),
             is_input: false,
         });
     }
@@ -84,48 +215,42 @@ pub fn get_output_devices() -> Vec<AudioDevice> {
 }
 
 pub fn get_default_input_device() -> Option<AudioDevice> {
-    if let Ok(output) = std::process::Command::new("pactl")
-        .args(["get-default-source"])
-        .output()
-    {
-        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !name.is_empty() {
-            return Some(AudioDevice {
-                name: name.clone(),
-                id: name,
-                is_input: true,
-            });
-        }
-    }
-    None
+    default_source_name().map(|name| AudioDevice {
+        name: name.clone(),
+        id: name,
+        is_input: true,
+    })
 }
 
 pub fn get_default_output_device() -> Option<AudioDevice> {
-    if let Ok(output) = std::process::Command::new("pactl")
-        .args(["get-default-sink"])
-        .output()
-    {
-        let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !name.is_empty() {
-            return Some(AudioDevice {
-                name: name.clone(),
-                id: name,
-                is_input: false,
-            });
-        }
-    }
-    None
+    default_sink_name().map(|name| AudioDevice {
+        name: name.clone(),
+        id: format!("{}.monitor", name),
+        is_input: false,
+    })
 }
 
 /// Returns the directory where Whisper models are stored.
 ///
 /// Search order:
-/// 1. `models/` relative to the current working directory (dev/local mode).
-/// 2. `models/` next to the running executable (installed mode, e.g. /opt/Scrivano/models/).
+/// 1. `$SNAP_USER_DATA/models` (snap runtime, user-writable).
+/// 2. `$SNAP/models` (bundled models inside snap).
+/// 3. `models/` relative to the current working directory (dev/local mode).
+/// 4. `models/` next to the running executable (installed mode, e.g. /opt/Scrivano/models/).
 /// Returns the first directory that exists and contains at least one `.bin` file.
 fn find_models_dir() -> Option<std::path::PathBuf> {
     let candidates: Vec<std::path::PathBuf> = {
-        let mut v = vec![std::path::PathBuf::from("models")];
+        let mut v = Vec::new();
+
+        if let Ok(snap_user_data) = std::env::var("SNAP_USER_DATA") {
+            v.push(std::path::PathBuf::from(snap_user_data).join("models"));
+        }
+
+        if let Ok(snap_dir) = std::env::var("SNAP") {
+            v.push(std::path::PathBuf::from(snap_dir).join("models"));
+        }
+
+        v.push(std::path::PathBuf::from("models"));
         if let Ok(exe) = std::env::current_exe() {
             if let Some(exe_dir) = exe.parent() {
                 v.push(exe_dir.join("models"));
@@ -326,19 +451,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_devices() {
-        let input_devices = get_input_devices();
-        let output_devices = get_output_devices();
+    fn parse_input_devices_filters_monitors() {
+        let output = "0\talsa_input.usb-Mic-00.analog-stereo\tmodule-alsa-card.c\t...\n1\talsa_output.pci-0000_00_1f.3.analog-stereo.monitor\tmodule-alsa-card.c\t...\n";
+        let devices = parse_input_devices(output);
 
-        println!("Input devices: {:?}", input_devices.len());
-        println!("Output devices: {:?}", output_devices.len());
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].name, "alsa_input.usb-Mic-00.analog-stereo");
+        assert_eq!(devices[0].id, "alsa_input.usb-Mic-00.analog-stereo");
+        assert!(devices[0].is_input);
+    }
 
-        for device in &input_devices {
-            println!("  Input: {} ({})", device.name, device.id);
-        }
+    #[test]
+    fn parse_output_devices_builds_monitor_ids() {
+        let output = "0\talsa_output.pci-0000_00_1f.3.analog-stereo\tmodule-alsa-card.c\t...\n1\tbluez_output.XX_XX_XX_XX_XX_XX.a2dp-sink\tmodule-bluez5-device.c\t...\n";
+        let devices = parse_output_devices(output);
 
-        for device in &output_devices {
-            println!("  Output: {} ({})", device.name, device.id);
-        }
+        assert_eq!(devices.len(), 2);
+        assert_eq!(
+            devices[0].id,
+            "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"
+        );
+        assert_eq!(
+            devices[1].id,
+            "bluez_output.XX_XX_XX_XX_XX_XX.a2dp-sink.monitor"
+        );
+        assert!(!devices[0].is_input);
+    }
+
+    #[test]
+    fn parse_short_list_name_supports_whitespace_format() {
+        let line = "0 alsa_input.usb-Mic-00.analog-stereo module-alsa-card.c s16le 2ch 48000Hz";
+        assert_eq!(
+            parse_short_list_name(line),
+            Some("alsa_input.usb-Mic-00.analog-stereo")
+        );
+    }
+
+    #[test]
+    fn parse_default_from_info_extracts_values() {
+        let info = "Server String: /run/user/1000/pulse/native\nDefault Sink: alsa_output.pci-0000_00_1f.3.analog-stereo\nDefault Source: alsa_input.usb-Mic-00.analog-stereo\n";
+
+        assert_eq!(
+            parse_default_from_info(info, "Default Sink").as_deref(),
+            Some("alsa_output.pci-0000_00_1f.3.analog-stereo")
+        );
+        assert_eq!(
+            parse_default_from_info(info, "Default Source").as_deref(),
+            Some("alsa_input.usb-Mic-00.analog-stereo")
+        );
     }
 }

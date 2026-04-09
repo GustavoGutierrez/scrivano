@@ -18,7 +18,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 /// Audio source type for recording
@@ -46,6 +46,32 @@ const CAPTURE_RATE: u32 = 44_100;
 pub const WHISPER_RATE: u32 = 16_000;
 /// Rolling waveform window size (samples at capture rate, ~185ms @ 44100Hz).
 const WAVE_WINDOW: usize = 8_192;
+
+fn connect_record_stream(stream: &mut Stream, source: Option<&str>) -> bool {
+    stream
+        .connect_record(
+            source,
+            Some(&BufferAttr {
+                maxlength: u32::MAX,
+                tlength: u32::MAX,
+                prebuf: u32::MAX,
+                minreq: u32::MAX,
+                fragsize: 4096,
+            }),
+            StreamFlagSet::NOFLAGS,
+        )
+        .is_ok()
+}
+
+fn should_fallback_to_default_source(
+    requested_source: &str,
+    captured_samples: usize,
+    elapsed: Duration,
+) -> bool {
+    let requested = requested_source.trim();
+    let is_explicit_source = !requested.is_empty() && requested != "default";
+    is_explicit_source && captured_samples == 0 && elapsed >= Duration::from_secs(2)
+}
 
 // ── Resampler ────────────────────────────────────────────────────────────────
 
@@ -150,29 +176,21 @@ pub fn spawn_system_audio_recorder(
             }
         };
 
-        let src = if source_name.is_empty() {
-            None
-        } else {
-            Some(source_name.as_str())
-        };
+        let mut source_for_record =
+            if source_name.trim().is_empty() || source_name.trim() == "default" {
+                None
+            } else {
+                Some(source_name.trim().to_string())
+            };
 
-        if stream
-            .connect_record(
-                src,
-                Some(&BufferAttr {
-                    maxlength: u32::MAX,
-                    tlength: u32::MAX,
-                    prebuf: u32::MAX,
-                    minreq: u32::MAX,
-                    fragsize: 4096,
-                }),
-                StreamFlagSet::NOFLAGS,
-            )
-            .is_err()
-        {
+        if !connect_record_stream(&mut stream, source_for_record.as_deref()) {
             eprintln!("[audio] Failed to connect recording stream");
             return;
         }
+
+        let mut captured_samples = 0usize;
+        let mut capture_started_at = Instant::now();
+        let mut fallback_to_default_attempted = false;
 
         // ── Read loop ───────────────────────────────────────────────────────
         while recording_flag.load(Ordering::SeqCst) {
@@ -217,6 +235,7 @@ pub fn spawn_system_audio_recorder(
 
                     // Resample to 16 kHz for Whisper
                     let float_16k = resample_linear(&float_44k, CAPTURE_RATE, WHISPER_RATE);
+                    captured_samples += float_16k.len();
                     audio_buffer.lock().unwrap().extend_from_slice(&float_16k);
 
                     // Update waveform window
@@ -234,6 +253,34 @@ pub fn spawn_system_audio_recorder(
                 }
                 PeekResult::Empty => {
                     thread::sleep(Duration::from_millis(2));
+                }
+            }
+
+            if !fallback_to_default_attempted
+                && should_fallback_to_default_source(
+                    source_for_record.as_deref().unwrap_or("default"),
+                    captured_samples,
+                    capture_started_at.elapsed(),
+                )
+            {
+                eprintln!(
+                    "[audio] No frames from source {:?} after {:.1}s; retrying with default source",
+                    source_for_record,
+                    capture_started_at.elapsed().as_secs_f32()
+                );
+
+                fallback_to_default_attempted = true;
+
+                if let Err(e) = stream.disconnect() {
+                    eprintln!("[audio] Failed to disconnect stream before fallback: {}", e);
+                }
+
+                if connect_record_stream(&mut stream, None) {
+                    source_for_record = None;
+                    capture_started_at = Instant::now();
+                } else {
+                    eprintln!("[audio] Failed to reconnect stream with default source");
+                    break;
                 }
             }
         }
@@ -380,5 +427,38 @@ mod tests {
         let input = vec![0.1_f32, 0.2, 0.3, 0.4];
         let output = resample_linear(&input, 16000, 16000);
         assert_eq!(input, output);
+    }
+
+    #[test]
+    fn fallback_to_default_when_no_data_from_explicit_source() {
+        assert!(should_fallback_to_default_source(
+            "alsa_input.usb-webcam.mono-fallback",
+            0,
+            Duration::from_secs(2)
+        ));
+        assert!(should_fallback_to_default_source(
+            "alsa_input.usb-webcam.mono-fallback",
+            0,
+            Duration::from_secs(4)
+        ));
+    }
+
+    #[test]
+    fn no_fallback_when_samples_already_captured_or_default_source() {
+        assert!(!should_fallback_to_default_source(
+            "alsa_input.usb-webcam.mono-fallback",
+            128,
+            Duration::from_secs(3)
+        ));
+        assert!(!should_fallback_to_default_source(
+            "default",
+            0,
+            Duration::from_secs(3)
+        ));
+        assert!(!should_fallback_to_default_source(
+            "",
+            0,
+            Duration::from_secs(3)
+        ));
     }
 }

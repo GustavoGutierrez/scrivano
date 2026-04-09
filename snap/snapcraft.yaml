@@ -1,66 +1,324 @@
 name: scrivano
-version: '1.0.2'
-summary: Desktop system audio recorder and transcriber
+version: '1.1.8'
+title: Scrivano
+summary: Privacy-first audio recorder and transcriber for Linux
 description: |
-  Scrivano is a Rust desktop application that records system audio on Linux 
-  (via PulseAudio/PipeWire) and transcribes it locally using Whisper. 
-  The UI is built with egui/eframe.
+  Scrivano is a native Linux desktop application that records system audio and transcribes it locally using Whisper AI - with complete privacy. No cloud services, no external APIs, your data stays on your device.
   
-  Features:
-  - Native system audio recording (PulseAudio/PipeWire loopback)
-  - Local transcription with Whisper (GGML models)
-  - Audio playback support
-  - Ollama integration for transcript improvement and summaries
-  - Export to TXT, Markdown, JSON, SRT, WebVTT
-  - Recording history with SQLite
-  - System tray icon support
-  - Dark theme UI
+  **Key Features:**
+  
+  🎙️ **Audio Recording**
+  - Native PulseAudio/PipeWire system audio capture
+  - Record meetings, podcasts, or any system audio
+  - Real-time audio visualization
+  
+  📝 **Local Transcription**
+  - Powered by Whisper AI (runs completely offline)
+  - Multiple model sizes: tiny for speed, small for accuracy
+  - Bundled Whisper models available on first run
+  
+  🤖 **AI Enhancement**
+  - Optional Ollama integration for transcript improvements
+  - Automatic summary generation
+  - Sentiment analysis and keyword extraction
+  
+  📊 **Organization & Export**
+  - Recording history with SQLite database
+  - Export to TXT, Markdown, JSON, SRT (subtitles), WebVTT
+  - Search and filter recordings
+  
+  🎨 **User Experience**
+  - Modern dark theme UI
+  - System tray integration
+  - Audio playback with waveform visualization
+  - Minimal resource usage
+  
+  **Privacy First:**
+  - All processing happens locally
+  - No internet connection required
+  - No telemetry or tracking
+  - Your recordings stay private
 
 icon: gui/icon.png
 
-developer: Gustavo Gutiérrez
 license: MIT
-license-url: https://github.com/GustavoGutierrez/scrivano/blob/main/LICENSE
-homepage: https://github.com/GustavoGutierrez/scrivano
-source: https://github.com/GustavoGutierrez/scrivano
+contact: gustavo@example.com
+website: https://github.com/GustavoGutierrez/scrivano
+source-code: https://github.com/GustavoGutierrez/scrivano
 issues: https://github.com/GustavoGutierrez/scrivano/issues
 
 grade: stable
-confinement: classic
+confinement: strict
 base: core22
 
+layout:
+  /usr/share/X11/locale:
+    symlink: $SNAP/x11-locale
+  /usr/share/X11/xkb:
+    symlink: $SNAP/xkb
+  /usr/share/alsa:
+    symlink: $SNAP/usr/share/alsa
+
 parts:
+  # X11 y XKB data (keyboard layouts)
+  xkb-data-part:
+    plugin: nil
+    stage-packages:
+      - xkb-data
+    override-build: |
+      craftctl default
+      # Resolver symlinks problemáticos en xkb/rules
+      RULES_DIR="$SNAPCRAFT_PART_INSTALL/usr/share/X11/xkb/rules"
+      if [ -d "$RULES_DIR" ]; then
+        cd "$RULES_DIR"
+        for link in $(find . -type l); do
+          target=$(readlink "$link" 2>/dev/null || true)
+          if [ -n "$target" ] && [ -f "$target" ]; then
+            rm "$link"
+            cp "$target" "$link"
+          elif [ -n "$target" ]; then
+            # Si el target no existe, remover el symlink
+            rm "$link" 2>/dev/null || true
+          fi
+        done
+      fi
+    organize:
+      usr/share/X11/xkb: xkb/
+    prime:
+      - xkb/
+
+  x11-locale-part:
+    plugin: nil
+    stage-packages:
+      - libx11-data
+    organize:
+      usr/share/X11/locale: x11-locale/
+    prime:
+      - x11-locale/
+
+  models:
+    plugin: dump
+    source: models/
+    source-type: local
+    organize:
+      ggml-tiny.bin: models/ggml-tiny.bin
+      ggml-small-q5_1.bin: models/ggml-small-q5_1.bin
+    prime:
+      - models/ggml-tiny.bin
+      - models/ggml-small-q5_1.bin
+
+  # Librerías principales de Scrivano
   scrivano:
     plugin: dump
-    source: bin/
+    source: dist-bin/
     source-type: local
-    stage:
-      - scrivano
+    stage-packages:
+      # Audio - Playback (rodio/alsa) y Capture (pulseaudio)
+      - libasound2
+      - libasound2-data
+      - libasound2-plugins
+      - alsa-ucm-conf
+      - libpulse0
+      - libpulse-mainloop-glib0
+      - pulseaudio-utils
+      - libsndfile1
+      - libogg0
+      - libvorbis0a
+      - libvorbisenc2
+      - libflac8
+      - libopus0
+      - libasyncns0
+      
+      # X11 / GUI - egui/eframe necesita estas
+      - libx11-6
+      - libx11-xcb1
+      - libx11-data
+      - libxcb1
+      - libxcb-keysyms1
+      - libxcb-randr0
+      - libxcb-shape0
+      - libxcb-xfixes0
+      - libxcb-xkb1
+      - libxau6
+      - libxdmcp6
+      - libxext6
+      - libxfixes3
+      - libxi6
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libxcursor1
+      - libxinerama1
+      - libxrandr2
+      - libxrender1
+      - libxxf86vm1
+      
+      # Mesa / OpenGL - para egui con glow backend
+      - libgl1
+      - libgl1-mesa-dri
+      - libgl1-mesa-glx
+      - libglapi-mesa
+      - libglvnd0
+      - libglx-mesa0
+      - libglx0
+      - libdrm2
+      - libgbm1
+      - libegl1
+      
+      # System Tray - libappindicator
+      - libappindicator3-1
+      - libayatana-appindicator3-1
+      - libayatana-indicator3-7
+      - libdbusmenu-glib4
+      - libdbusmenu-gtk3-4
+      - libgtk-3-0
+      - libgtk-3-common
+      - libglib2.0-0
+      - libgdk-pixbuf-2.0-0
+      - libpango-1.0-0
+      - libpangocairo-1.0-0
+      - libcairo2
+      - libcairo-gobject2
+      - libharfbuzz0b
+      - libfontconfig1
+      - libfreetype6
+      - libpng16-16
+      - libjpeg8
+      - libtiff5
+      - libwebp7
+      - libdeflate0
+      - libjbig0
+      - libpixman-1-0
+      - libthai0
+      - libdatrie1
+      - libfribidi0
+      - libgraphite2-3
+      - libepoxy0
+      - libwayland-client0
+      - libwayland-cursor0
+      - libwayland-egl1
+      - libwayland-server0
+      - libxcomposite1
+      - libxdamage1
+      - libxkbfile1
+      - librsvg2-2
+      - libxml2
+      - shared-mime-info
+      - iso-codes
+      - hicolor-icon-theme
+      - adwaita-icon-theme
+      - ubuntu-mono
+      - humanity-icon-theme
+      - gnome-themes-standard
+      - gtk-update-icon-cache
+      - dconf-gsettings-backend
+      - dconf-service
+      - gsettings-desktop-schemas
+      - glib-networking
+      - session-migration
+      
+      # Otras librerías de audio/GStreamer que pueden necesitar
+      - libgstreamer1.0-0
+      - libgstreamer-plugins-base1.0-0
+      - libgstreamer-plugins-good1.0-0
+      - liborc-0.4-0
+      - libspeexdsp1
+      - liblcms2-2
+      - libwebp7
+      - libavahi-client3
+      - libavahi-common3
+      - libbz2-1.0
+      - libexpat1
+      - libuuid1
+      - libmount1
+      - libblkid1
+      - libselinux1
+      - libpcre2-8-0
+      - libpcre3
+      - liblzma5
+      - liblz4-1
+      - libzstd1
+      - libsystemd0
+      - libgcrypt20
+      - libgpg-error0
+      - liblz4-1
+      - libkrb5-3
+      - libk5crypto3
+      - libcom-err2
+      - libkrb5support0
+      - libkeyutils1
+      - libssl3
+      - libicu70
+      - libstdc++6
+      - libgcc-s1
+      
+    organize:
+      usr/lib/: lib/
+      usr/lib/x86_64-linux-gnu/pulseaudio/: lib/x86_64-linux-gnu/pulseaudio/
+      usr/lib/x86_64-linux-gnu/alsa-lib/: lib/x86_64-linux-gnu/alsa-lib/
     prime:
       - scrivano
+      - lib/
+      - usr/bin/pactl
+      - usr/bin/pacat
+      - usr/bin/paplay
+      - usr/share/alsa/
+      - lib/x86_64-linux-gnu/alsa-lib/
+
+  # Script wrapper y herramientas de descarga
+  wrapper:
+    plugin: dump
+    source: wrapper/
+    source-type: local
+    organize:
+      scrivano-wrapper: bin/scrivano-wrapper
+      asound.conf: etc/asound.conf
+    prime:
+      - bin/scrivano-wrapper
+      - etc/asound.conf
+
+  # Iconos
   gui:
     plugin: dump
     source: gui/
     source-type: local
-    stage:
-      - gui/
+    organize:
+      icon.png: gui/icon.png
+      '*': gui/
     prime:
       - gui/
 
 apps:
   scrivano:
-    command: scrivano
-    completer: bash-completion.bash
+    command: bin/scrivano-wrapper
     environment:
-      PULSE_SERVER: "$XDG_RUNTIME_DIR/pulse/native"
+      SNAP_USER_DATA: "$SNAP_USER_DATA"
+      LD_LIBRARY_PATH: "$SNAP/lib:$SNAP/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+      XKB_CONFIG_ROOT: "$SNAP/xkb"
+      XLOCALEDIR: "$SNAP/x11-locale"
+      LIBGL_DRIVERS_PATH: "$SNAP/lib/x86_64-linux-gnu/dri"
+      DRI_DRIVER_DIR: "$SNAP/lib/x86_64-linux-gnu/dri"
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      MESA_LOADER_DRIVER_OVERRIDE: "swrast"
+      ALSA_CONFIG_PATH: "/usr/share/alsa/alsa.conf"
+      ALSA_CONFIG_DIR: "/usr/share/alsa"
+      GTK_THEME: "Adwaita"
+      FONTCONFIG_PATH: "$SNAP/etc/fonts"
+      GSETTINGS_SCHEMA_DIR: "$SNAP/usr/share/glib-2.0/schemas"
+      GTK_DATA_PREFIX: "$SNAP/usr"
+      GTK_EXE_PREFIX: "$SNAP/usr"
     plugs:
       - audio-playback
+      - audio-record
+      - pulseaudio
       - network
-      - network-client
       - home
       - removable-media
-    slots:
-      - audio-playback
+      - desktop
+      - desktop-legacy
+      - x11
+      - wayland
+      - unity7
+      - opengl
 
 architectures:
   - arm64

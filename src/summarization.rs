@@ -49,6 +49,9 @@ pub struct SummaryResult {
 }
 
 /// Prompt builder for summary templates
+///
+/// All prompts are in Spanish with an explicit instruction to respond
+/// in the same language as the transcript (Spanish or English).
 pub fn build_summary_prompt(
     transcript: &str,
     template: SummaryTemplate,
@@ -56,42 +59,46 @@ pub fn build_summary_prompt(
 ) -> String {
     let instruction = match template {
         SummaryTemplate::Executive => {
-            "Provide a concise executive summary of the meeting in 3-5 bullet points. \
-             Focus on: key topics discussed, main decisions made, and action items."
+            "Genera un resumen ejecutivo conciso de la reunión en 3-5 puntos clave. \
+             Enfócate en: temas principales discutidos, decisiones tomadas y tareas asignadas."
         }
         SummaryTemplate::Complete => {
-            "Provide a comprehensive summary of the entire meeting. Include: attendee names mentioned, \
-             all topics discussed, detailed decisions made, all action items with owners and deadlines, \
-             important questions raised, and next steps. Be thorough and preserve all key information."
+            "Genera un resumen completo y detallado de toda la reunión. Incluye: nombres de asistentes mencionados, \
+             todos los temas discutidos, decisiones detalladas, tareas asignadas con responsables y plazos, \
+             preguntas importantes planteadas y próximos pasos. Sé exhaustivo y conserva toda la información clave."
         }
         SummaryTemplate::Tasks => {
-            "Extract all action items and tasks from the meeting. \
-             For each task, include: what needs to be done, who is responsible (if mentioned), and deadline (if mentioned)."
+            "Extrae todas las tareas y acciones de la reunión. \
+             Para cada tarea incluye: qué hay que hacer, quién es responsable (si se menciona) y plazo (si se menciona)."
         }
         SummaryTemplate::Jira => {
-            "Extract all tasks and action items from the meeting and format them as Jira-style tickets. \
-             For each task, provide: Summary (short title), Description (what needs to be done), \
-             Assignee (who is responsible), Priority (Critical/High/Medium/Low), \
-             Due Date (if mentioned). Format as:\n\n- **Summary:** [task title] \
-             \n  **Description:** [details]\n  **Assignee:** [name or 'Unassigned']\n  **Priority:** [level]\n  **Due Date:** [date or 'TBD']"
+            "Extrae todas las tareas y acciones de la reunión y formatea como tickets estilo Jira. \
+             Para cada tarea proporciona: Resumen (título corto), Descripción (qué hay que hacer), \
+             Asignado (responsable), Prioridad (Crítica/Alta/Media/Baja), \
+             Fecha límite (si se menciona). Formato:\n\n- **Resumen:** [título] \
+             \n  **Descripción:** [detalles]\n  **Asignado:** [nombre o 'Sin asignar']\n  **Prioridad:** [nivel]\n  **Fecha límite:** [fecha o 'Por definir']"
         }
         SummaryTemplate::Decisions => {
-            "List all decisions made during the meeting. \
-             For each decision, briefly describe what was decided and any relevant context."
+            "Lista todas las decisiones tomadas durante la reunión. \
+             Para cada decisión, describe brevemente qué se decidió y cualquier contexto relevante."
         }
     };
 
-    let mut prompt = instruction.to_string();
+    let language_instruction = "\n\nIMPORTANTE: Responde en el mismo idioma en que está escrita la transcripción. \
+        Si la transcripción está en español, responde en español. Si está en inglés, responde en inglés. \
+        No traduzcas ni cambies el idioma.";
+
+    let mut prompt = format!("{}{}", instruction, language_instruction);
 
     if let Some(custom) = custom_prompt {
         if !custom.trim().is_empty() {
-            prompt.push_str("\n\nAdditional instructions: ");
+            prompt.push_str("\n\nInstrucciones adicionales: ");
             prompt.push_str(custom);
         }
     }
 
     format!(
-        "{}\n\nMeeting Transcript:\n{}\n\nSummary:",
+        "{}\n\nTranscripción de la reunión:\n{}\n\nResumen:",
         prompt, transcript
     )
 }
@@ -120,7 +127,7 @@ pub fn is_thinking_model(model_name: &str) -> bool {
 }
 
 /// Extract final content from thinking model response
-/// Handles responses containing </think> or similar thinking delimiters
+/// Handles responses containing <think> or similar thinking delimiters
 pub fn extract_thinking_content(response: &str) -> (String, Option<String>) {
     eprintln!(
         "[summarization] Extracting thinking from {} chars",
