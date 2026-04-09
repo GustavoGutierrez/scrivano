@@ -26,6 +26,12 @@ snap/bin/scrivano
 # Local IDE / agent tool settings (machine-specific paths)
 .claude/settings.local.json
 
+# Local debug artifacts
+scrivano-debug.log
+
+# Temporary root-level GUI asset staging (Snap listing prep)
+/gui/
+
 
 *.prompt.md
 .cargo/
