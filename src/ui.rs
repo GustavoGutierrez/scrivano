@@ -111,6 +111,16 @@ enum Tab {
     About,
 }
 
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum SettingsSection {
+    Audio,
+    Transcription,
+    Ai,
+    Summaries,
+    Prompts,
+    System,
+}
+
 pub struct App {
     pub recording: Arc<AtomicBool>,
     pub audio_buffer: Arc<Mutex<Vec<f32>>>,
@@ -124,6 +134,7 @@ pub struct App {
     selected_input_index: usize,
     selected_output_index: usize,
     settings: AppSettings,
+    settings_section: SettingsSection,
     is_transcribing: Arc<AtomicBool>,
     available_models: Vec<(String, String)>,
     selected_model_index: usize,
@@ -253,6 +264,7 @@ impl App {
             selected_input_index,
             selected_output_index,
             settings,
+            settings_section: SettingsSection::Audio,
             is_transcribing: Arc::new(AtomicBool::new(false)),
             available_models,
             selected_model_index,
@@ -1064,6 +1076,7 @@ impl App {
         }
     }
 
+<<<<<<< HEAD
     fn show_recording_row_expanded(&mut self, ui: &mut egui::Ui, entry: &RecordingEntry) {
         // Load summaries if not cached
         if !self.summaries_cache.contains_key(&entry.id) {
@@ -2035,6 +2048,1137 @@ impl App {
         }
     }
 
+=======
+<<<<<<< Updated upstream
+>>>>>>> develop
+    fn start_recording(&mut self) {
+        self.audio_buffer.lock().unwrap().clear();
+        self.waveform_buffer.lock().unwrap().clear();
+        self.waveform_buffer.lock().unwrap().clear();
+        self.pending_highlights.lock().unwrap().clear();
+        self.transcript_edit = "Grabando...".to_string();
+        *self.transcript.lock().unwrap() = "Grabando...".to_string();
+        self.recording.store(true, Ordering::SeqCst);
+        self.recording_start_timestamp = Some(chrono_local_now());
+
+        let output_monitor = self
+            .output_devices
+            .get(self.selected_output_index)
+            .map(|(_, id)| id.clone())
+            .unwrap_or_default();
+
+        let input_source = self
+            .input_devices
+            .get(self.selected_input_index)
+            .map(|(_, id)| id.clone())
+            .unwrap_or_default();
+
+        let source_name = choose_capture_source(&input_source, &output_monitor);
+
+        eprintln!("[ui] Grabando desde: {:?}", source_name);
+
+        spawn_system_audio_recorder(
+            self.recording.clone(),
+            self.audio_buffer.clone(),
+            self.waveform_buffer.clone(),
+            source_name,
+        );
+    }
+=======
+                                ui.add_space(4.0);
+
+                                let title = entry.title.as_deref().unwrap_or(&entry.filename);
+                                let truncated = if title.len() > 40 {
+                                    format!("{}...", &title[..37])
+                                } else {
+                                    title.to_string()
+                                };
+
+                                ui.label(
+                                    RichText::new(truncated)
+                                        .size(13.0)
+                                        .color(TEXT_PRIMARY)
+                                        .strong(),
+                                );
+
+                                ui.add_space(8.0);
+                                ui.label(
+                                    RichText::new(format!("⏱ {}", entry.duration_display()))
+                                        .size(11.0)
+                                        .color(TEXT_DIM),
+                                );
+
+                                // Status badges
+                                ui.add_space(8.0);
+                                if entry.has_transcript {
+                                    ui.label(
+                                        RichText::new(ICON_FILE).size(12.0).color(ACCENT_GREEN),
+                                    )
+                                    .on_hover_text("Tiene transcripción");
+                                }
+                                if entry.has_summaries {
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        RichText::new(ICON_MAGIC).size(12.0).color(ACCENT_PURPLE),
+                                    )
+                                    .on_hover_text("Tiene resúmenes");
+                                }
+
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        // Delete button - circular with red border, 24x24
+                                        let delete_btn = egui::Button::new(
+                                            RichText::new("×").size(14.0).color(ACCENT_RED),
+                                        )
+                                        .fill(Color32::TRANSPARENT)
+                                        .stroke(Stroke::new(1.0, ACCENT_RED))
+                                        .rounding(12.0)
+                                        .min_size(egui::vec2(24.0, 24.0));
+
+                                        if ui
+                                            .add(delete_btn)
+                                            .on_hover_text("Eliminar grabación")
+                                            .clicked()
+                                        {
+                                            self.recording_to_delete = Some(entry.id);
+                                            self.show_delete_confirmation = true;
+                                        }
+
+                                        ui.add_space(8.0);
+
+                                        // Play button - circular with green border, 24x24
+                                        #[cfg(feature = "audio-playback")]
+                                        {
+                                            let btn = egui::Button::new(
+                                                RichText::new(ICON_PLAY)
+                                                    .size(12.0)
+                                                    .color(ACCENT_GREEN),
+                                            )
+                                            .fill(Color32::TRANSPARENT)
+                                            .stroke(Stroke::new(1.0, ACCENT_GREEN))
+                                            .rounding(12.0)
+                                            .min_size(egui::vec2(24.0, 24.0));
+
+                                            if ui.add(btn).on_hover_text("Reproducir").clicked() {
+                                                let wav_path =
+                                                    entry.filepath.replace(".txt", ".wav");
+                                                if std::path::Path::new(&wav_path).exists() {
+                                                    if let Some(ref mut player) = self.audio_player
+                                                    {
+                                                        let _ = player.play(&wav_path);
+                                                        self.current_playing_id = Some(entry.id);
+                                                    }
+                                                }
+                                            }
+
+                                            ui.add_space(8.0);
+                                        }
+                                    },
+                                );
+                            });
+>>>>>>> Stashed changes
+
+    fn stop_and_transcribe(&mut self) {
+        self.recording.store(false, Ordering::SeqCst);
+
+        let pending_highlights = self.pending_highlights.clone();
+        let buffer = self.audio_buffer.clone();
+        let transcript = self.transcript.clone();
+        let ctx = self.whisper_ctx.clone();
+        let is_transcribing = self.is_transcribing.clone();
+        let is_improving = self.is_improving.clone();
+        let folder = self.settings.recordings_folder.clone();
+        let ollama_enabled = self.ollama_enabled;
+        let ollama_model = self
+            .ollama_models
+            .get(self.ollama_selected_index)
+            .cloned()
+            .unwrap_or_default();
+        let duration_secs = self.last_recording_duration;
+        let recordings_dirty = self.recordings_dirty.clone();
+        let transcribe_progress = self.transcribe_progress.clone();
+        let ollama_progress = self.ollama_progress.clone();
+        let language_default = self.settings.language_default.clone();
+
+        // DB path for inserting the new entry
+        let db_path = dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("Scrivano")
+            .join("recordings.db");
+
+        is_transcribing.store(true, Ordering::SeqCst);
+        transcribe_progress.store(0, Ordering::SeqCst);
+
+        std::thread::spawn(move || {
+            let audio_data = buffer.lock().unwrap().clone();
+            eprintln!(
+                "[transcribe] {} muestras ({:.1}s a 16 kHz)",
+                audio_data.len(),
+                audio_data.len() as f32 / 16_000.0
+            );
+
+            // ── Paso 1: Whisper ──────────────────────────────────────────────
+            let tp = transcribe_progress.clone();
+            let (raw_text, segments) = if audio_data.is_empty() {
+                tp.store(100, Ordering::SeqCst);
+                (
+                    "(Buffer vacío — no se capturó audio)".to_string(),
+                    Vec::new(),
+                )
+            } else {
+                let tp2 = tp.clone();
+                let language = TranscriptionLanguage::from_code(&language_default)
+                    .unwrap_or(TranscriptionLanguage::Spanish);
+                match transcribe_with_segments(&ctx, &audio_data, language, move |pct| {
+                    tp2.store(pct, Ordering::SeqCst);
+                }) {
+                    Ok((text, segs)) => {
+                        if text.trim().is_empty() {
+                            ("(Whisper no detectó habla)".to_string(), segs)
+                        } else {
+                            (text, segs)
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error transcripción: {}", e);
+                        (format!("Error transcripción: {}", e), Vec::new())
+                    }
+                }
+            };
+
+            is_transcribing.store(false, Ordering::SeqCst);
+            transcribe_progress.store(-1, Ordering::SeqCst);
+
+<<<<<<< Updated upstream
+            *transcript.lock().unwrap() = raw_text.clone();
+
+=======
+        let frame = egui::Frame::none()
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(20.0, 16.0));
+
+        frame.show(ui, |ui| {
+            ui.vertical(|ui| {
+                // Action buttons row
+                ui.horizontal(|ui| {
+                    // Title
+                    let display_title = entry
+                        .title.as_deref()
+                        .unwrap_or(&entry.filename);
+                    let truncated = if display_title.len() > 45 {
+                        format!("{}...", &display_title[..42])
+                    } else {
+                        display_title.to_string()
+                    };
+
+                    ui.label(
+                        RichText::new(truncated)
+                            .size(14.0)
+                            .color(TEXT_PRIMARY)
+                            .strong(),
+                    );
+
+                    ui.add_space(8.0);
+
+                    // Metadata row
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(&entry.created_at)
+                                .size(11.0)
+                                .color(TEXT_MUTED),
+                        );
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new(format!("⏱ {}", entry.duration_display()))
+                                .size(11.0)
+                                .color(TEXT_DIM),
+                        );
+
+                        if let Some(tags) = &entry.tags {
+                            ui.add_space(8.0);
+                            for tag in tags.split(',').take(2) {
+                                let t = tag.trim();
+                                if !t.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        RichText::new(format!("{} {}", ICON_TAG, t))
+                                            .size(10.0)
+                                            .color(ACCENT_BLUE),
+                                    );
+                                }
+                            }
+                        }
+
+                        if entry.ollama_used {
+                            ui.add_space(6.0);
+                            ui.label(RichText::new(ICON_MAGIC).size(11.0).color(ACCENT_PURPLE));
+                        }
+                    });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Open button - circular with blue border, 28x28
+                        let open_btn = egui::Button::new(
+                            RichText::new(ICON_FILE).size(14.0).color(ACCENT_BLUE),
+                        )
+                        .fill(Color32::TRANSPARENT)
+                        .stroke(Stroke::new(1.0, ACCENT_BLUE))
+                        .rounding(14.0)
+                        .min_size(egui::vec2(28.0, 28.0));
+
+                        if ui.add(open_btn).on_hover_text("Abrir archivo").clicked() {
+                            let _ = std::process::Command::new("xdg-open")
+                                .arg(&entry.filepath)
+                                .spawn();
+                        }
+
+                        ui.add_space(8.0);
+
+                        // Play button - circular with green border, 28x28
+                        #[cfg(feature = "audio-playback")]
+                        {
+                            let is_playing = self
+                                .audio_player
+                                .as_ref()
+                                .map(|p| p.is_playing())
+                                .unwrap_or(false);
+                            let play_icon =
+                                if self.current_playing_id == Some(entry.id) && is_playing {
+                                    ICON_PAUSE
+                                } else {
+                                    ICON_PLAY
+                                };
+                            let btn = egui::Button::new(
+                                RichText::new(play_icon).size(14.0).color(ACCENT_GREEN),
+                            )
+                            .fill(Color32::TRANSPARENT)
+                            .stroke(Stroke::new(1.0, ACCENT_GREEN))
+                            .rounding(14.0)
+                            .min_size(egui::vec2(28.0, 28.0));
+
+                            if ui.add(btn).on_hover_text("Reproducir").clicked() {
+                                self.toggle_playback(entry);
+                            }
+                        }
+                    });
+                });
+
+                // Expanded view content
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                // Action buttons
+                ui.horizontal(|ui| {
+                    // Export transcript
+                    ui.menu_button("📄 Texto", |ui| {
+                        ui.set_min_width(120.0);
+                        if ui.button("📄 TXT").clicked() {
+                            self.export_recording_transcript(entry, "txt");
+                            ui.close_menu();
+                        }
+                        if ui.button("📝 Markdown").clicked() {
+                            self.export_recording_transcript(entry, "md");
+                            ui.close_menu();
+                        }
+                        if ui.button("📋 JSON").clicked() {
+                            self.export_recording_transcript(entry, "json");
+                            ui.close_menu();
+                        }
+                        if ui.button("🎬 SRT").clicked() {
+                            self.export_recording_transcript(entry, "srt");
+                            ui.close_menu();
+                        }
+                        if ui.button("🌐 VTT").clicked() {
+                            self.export_recording_transcript(entry, "vtt");
+                            ui.close_menu();
+                        }
+                    });
+
+                    ui.add_space(8.0);
+
+                    // Export audio
+                    ui.menu_button("🎵 Audio", |ui| {
+                        ui.set_min_width(140.0);
+                            if ui.button(format!("{} WAV", ICON_AUDIO)).clicked() {
+                            self.export_recording_audio(entry, "wav");
+                            ui.close_menu();
+                        }
+                        if ui.button("🎵 MP3").clicked() {
+                            ui.close_menu();
+                        }
+                        if ui.button("🎵 FLAC").clicked() {
+                            ui.close_menu();
+                        }
+                    });
+
+                    ui.add_space(16.0);
+
+                    // Summary buttons (if Ollama available)
+                    if self.ollama_available {
+                        ui.label(RichText::new("✨ Resumir:").size(12.0).color(TEXT_DIM));
+                        ui.add_space(4.0);
+
+                        // Check which summaries are being generated
+                        let generating = self.generating_summaries.lock().unwrap();
+                        let is_generating_exec = generating.get(&entry.id).map(|v| v.contains(&"executive".to_string())).unwrap_or(false);
+                        let is_generating_comp = generating.get(&entry.id).map(|v| v.contains(&"complete".to_string())).unwrap_or(false);
+                        let is_generating_tasks = generating.get(&entry.id).map(|v| v.contains(&"tasks".to_string())).unwrap_or(false);
+                        let is_generating_jira = generating.get(&entry.id).map(|v| v.contains(&"jira".to_string())).unwrap_or(false);
+                        let is_generating_decisions = generating.get(&entry.id).map(|v| v.contains(&"decisions".to_string())).unwrap_or(false);
+                        drop(generating);
+
+                        // Check if transcript exists and is not empty
+                        let has_transcript_content = std::fs::read_to_string(&entry.filepath)
+                            .map(|content| !content.trim().is_empty() && content != "Grabando...")
+                            .unwrap_or(false);
+
+                        if !has_transcript_content {
+                            ui.label(RichText::new("⚠️ Transcripción vacía - no se puede generar resumen")
+                                .size(11.0)
+                                .color(ACCENT_RED));
+                        } else {
+
+                        // Row 1: Executive, Complete
+                        ui.horizontal(|ui| {
+                            let exec_label = if is_generating_exec { "⏳ Ejecutivo..." } else { "📋 Ejecutivo" };
+                            let exec_btn =
+                                egui::Button::new(RichText::new(exec_label).size(12.0))
+                                    .fill(if is_generating_exec { Color32::from_rgb(80, 90, 110) } else { ACCENT_BLUE })
+                                    .rounding(4.0)
+                                    .min_size(egui::vec2(90.0, 28.0));
+                            if ui.add(exec_btn).clicked() && !is_generating_exec {
+                                self.generate_summary_for_recording(entry.id, "executive");
+                            }
+
+                            ui.add_space(4.0);
+
+                            let comp_label = if is_generating_comp { "⏳ Completo..." } else { "📄 Completo" };
+                            let complete_btn =
+                                egui::Button::new(RichText::new(comp_label).size(12.0))
+                                    .fill(if is_generating_comp { Color32::from_rgb(80, 90, 110) } else { ACCENT_BLUE })
+                                    .rounding(4.0)
+                                    .min_size(egui::vec2(90.0, 28.0));
+                            if ui.add(complete_btn).clicked() && !is_generating_comp {
+                                self.generate_summary_for_recording(entry.id, "complete");
+                            }
+                        });
+
+                        ui.add_space(6.0);
+
+                        // Row 2: Tasks, Jira Tasks, Decisions
+                        ui.horizontal(|ui| {
+                            let tasks_label = if is_generating_tasks { "⏳ Tareas..." } else { "✅ Tareas" };
+                            let tasks_btn =
+                                egui::Button::new(RichText::new(tasks_label).size(12.0))
+                                    .fill(if is_generating_tasks { Color32::from_rgb(80, 90, 110) } else { ACCENT_BLUE })
+                                    .rounding(4.0)
+                                    .min_size(egui::vec2(90.0, 28.0));
+                            if ui.add(tasks_btn).clicked() && !is_generating_tasks {
+                                self.generate_summary_for_recording(entry.id, "tasks");
+                            }
+
+                            ui.add_space(4.0);
+
+                            let jira_label = if is_generating_jira { "⏳ Jira..." } else { "📊 Jira" };
+                            let jira_btn = egui::Button::new(RichText::new(jira_label).size(12.0))
+                                .fill(if is_generating_jira { Color32::from_rgb(80, 90, 110) } else { ACCENT_BLUE })
+                                .rounding(4.0)
+                                .min_size(egui::vec2(90.0, 28.0));
+                            if ui.add(jira_btn).clicked() && !is_generating_jira {
+                                self.generate_summary_for_recording(entry.id, "jira");
+                            }
+
+                            ui.add_space(4.0);
+
+                            let decisions_label = if is_generating_decisions { "⏳ Decisiones..." } else { "📝 Decisiones" };
+                            let decisions_btn =
+                                egui::Button::new(RichText::new(decisions_label).size(12.0))
+                                    .fill(if is_generating_decisions { Color32::from_rgb(80, 90, 110) } else { ACCENT_BLUE })
+                                    .rounding(4.0)
+                                    .min_size(egui::vec2(90.0, 28.0));
+                            if ui.add(decisions_btn).clicked() && !is_generating_decisions {
+                                self.generate_summary_for_recording(entry.id, "decisions");
+                            }
+                        });
+                        } // close else has_transcript_content
+                    } else {
+                        ui.label(RichText::new("⚠️ Ollama no disponible - resúmenes deshabilitados")
+                            .size(11.0)
+                            .color(ACCENT_RED));
+                    }
+                }); // close ui.horizontal
+
+                // Show summaries section
+                ui.add_space(16.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                // Check if any summary generation failed recently
+                let has_error = summaries.iter().any(|s| s.content.starts_with("ERROR:"));
+                let has_empty = summaries.iter().any(|s| s.content.trim().is_empty());
+
+                if has_error {
+                    ui.label(RichText::new("❌ Error generando resúmenes - revisa la terminal").size(12.0).color(ACCENT_RED));
+                } else if has_empty && !summaries.is_empty() {
+                    ui.label(RichText::new("⚠️ Algunos resúmenes están vacíos").size(12.0).color(ACCENT_RED));
+                }
+
+                if !summaries.is_empty() {
+                    ui.label(RichText::new("✨ Resúmenes generados").size(13.0).color(TEXT_PRIMARY).strong());
+                    ui.add_space(8.0);
+
+                    for summary in &summaries {
+                        // Skip empty summaries but show error indicator
+                        if summary.content.trim().is_empty() || summary.content.starts_with("ERROR:") {
+                            let error_msg = if summary.content.starts_with("ERROR:") {
+                                summary.content.clone()
+                            } else {
+                                format!("ERROR: Resumen '{}' vacío", summary.template)
+                            };
+                            ui.label(RichText::new(&error_msg).size(11.0).color(ACCENT_RED));
+                            continue;
+                        }
+                        let template_label = match summary.template.as_str() {
+                            "executive" => "📋 Ejecutivo",
+                            "complete" => "📄 Completo",
+                            "tasks" => "✅ Tareas",
+                            "jira" => "📊 Jira",
+                            "decisions" => "📝 Decisiones",
+                            _ => &summary.template,
+                        };
+
+                        egui::CollapsingHeader::new(
+                            RichText::new(format!("{} (via {})", template_label,
+                                summary.model_name.as_deref().unwrap_or("Ollama")))
+                                .size(12.0)
+                                .color(ACCENT_BLUE)
+                        )
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            ui.add_space(4.0);
+
+                            // Show thinking block if available and user wants to see it
+                            if summary.is_thinking_model && summary.raw_thinking.is_some() {
+                                if self.settings.summary_thinking_policy == "show_for_debug" {
+                                    ui.label(RichText::new("🧠 Proceso de thinking:").size(11.0).color(TEXT_DIM));
+                                    ui.add_sized(
+                                        egui::vec2(ui.available_width(), 80.0),
+                                        egui::TextEdit::multiline(
+                                            &mut summary.raw_thinking.clone().unwrap_or_default()
+                                        )
+                                        .font(FontId::proportional(10.0))
+                                        .text_color(Color32::from_rgb(100, 120, 140))
+                                    );
+                                    ui.add_space(8.0);
+                                }
+                            }
+
+                            // Show summary content
+                            let mut content = summary.content.clone();
+                            ui.add_sized(
+                                egui::vec2(ui.available_width(), 120.0),
+                                egui::TextEdit::multiline(&mut content)
+                                    .font(FontId::proportional(12.0))
+                                    .text_color(TEXT_PRIMARY)
+                            );
+                            ui.add_space(8.0);
+
+                            // Copy button
+                            if ui.button("📋 Copiar al portapapeles").clicked() {
+                                ui.output_mut(|o| o.copied_text = summary.content.clone());
+                            }
+                        });
+                        ui.add_space(4.0);
+                    }
+                }
+
+                ui.add_space(12.0);
+
+                // Audio playback controls (full player)
+                #[cfg(feature = "audio-playback")]
+                {
+                    ui.add_space(8.0);
+                    let frame = egui::Frame::none()
+                        .fill(Color32::from_rgb(35, 42, 56))
+                        .stroke(Stroke::new(1.0, BORDER))
+                        .rounding(6.0)
+                        .inner_margin(egui::Margin::symmetric(12.0, 8.0));
+
+                    frame.show(ui, |ui| {
+                        ui.label(RichText::new("🎧 Reproductor de audio").size(13.0).color(TEXT_PRIMARY).strong());
+                        ui.add_space(8.0);
+
+                        // Check if WAV file exists
+                        let wav_path = entry.filepath.replace(".txt", ".wav");
+                        let wav_exists = std::path::Path::new(&wav_path).exists();
+
+                        if !wav_exists {
+                            ui.label(RichText::new("⚠️ No hay archivo de audio (.wav) para esta grabación")
+                                .size(12.0)
+                                .color(ACCENT_RED));
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("La grabación de audio del sistema debe estar habilitada para reproducir")
+                                .size(11.0)
+                                .color(TEXT_MUTED));
+                        } else {
+                            let player = self.audio_player.as_ref();
+                            let is_playing = player.map(|p| p.is_playing()).unwrap_or(false);
+                            let is_paused = player.map(|p| p.is_paused()).unwrap_or(false);
+                            let is_current_item = self.current_playing_id == Some(entry.id);
+
+                            // Only calculate elapsed time for the currently playing item
+                            let elapsed = if is_current_item && (is_playing || is_paused) {
+                                player.map(|p| p.get_elapsed_secs()).unwrap_or(0.0)
+                            } else {
+                                0.0
+                            };
+                            let total = entry.duration_secs;
+
+                            // All controls in a single horizontal row
+                            ui.horizontal(|ui| {
+                                // Play/Pause button - perfectly circular
+                                let button_size = 36.0;
+                                let play_icon = if is_current_item && is_playing { ICON_PAUSE } else { ICON_PLAY };
+                                let play_btn = egui::Button::new(
+                                    RichText::new(play_icon).size(14.0).color(ACCENT_GREEN),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(Stroke::new(2.0, ACCENT_GREEN))
+                                .rounding(button_size / 2.0)  // Perfect circle
+                                .min_size(egui::vec2(button_size, button_size));
+
+                                if ui.add(play_btn).on_hover_text(if is_playing { "Pausar" } else { "Reproducir" }).clicked() {
+                                    self.toggle_playback(entry);
+                                }
+
+                                ui.add_space(12.0);
+
+                                // Time display
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} / {}",
+                                        format_time_simple(elapsed),
+                                        format_time_simple(total)
+                                    ))
+                                    .size(13.0)
+                                    .color(TEXT_PRIMARY),
+                                );
+
+                                ui.add_space(16.0);
+
+                                // Stop button - square
+                                let stop_btn = egui::Button::new(
+                                    RichText::new(ICON_STOP).size(12.0).color(TEXT_DIM),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(Stroke::new(1.0, TEXT_DIM))
+                                .rounding(4.0)
+                                .min_size(egui::vec2(28.0, 28.0));
+
+                                if ui.add(stop_btn).on_hover_text("Detener").clicked() {
+                                    self.stop_playback();
+                                }
+
+                                ui.add_space(24.0);
+
+                                // Volume control with icon and slider
+                                ui.label(RichText::new(ICON_VOLUME).size(14.0).color(TEXT_DIM));
+                                let mut vol = self.playback_volume;
+                                ui.add_sized(egui::vec2(80.0, 20.0), egui::Slider::new(&mut vol, 0.0..=1.0).show_value(false));
+                                self.playback_volume = vol;
+
+                                if let Some(ref player) = self.audio_player {
+                                    player.set_volume(self.playback_volume);
+                                }
+                            });
+                        }
+                    });
+                }
+
+                ui.add_space(4.0);
+            });
+        });
+    }
+
+    fn toggle_playback(&mut self, entry: &RecordingEntry) {
+        #[cfg(feature = "audio-playback")]
+        {
+            // Find the .wav file for this recording
+            let wav_path = entry.filepath.replace(".txt", ".wav");
+
+            if let Some(ref mut player) = self.audio_player {
+                if self.current_playing_id == Some(entry.id) {
+                    if player.is_playing() {
+                        player.pause();
+                    } else if player.is_paused() {
+                        player.resume();
+                    } else {
+                        // Start playing from beginning - use .wav file
+                        if std::path::Path::new(&wav_path).exists() {
+                            match player.play(&wav_path) {
+                                Ok(_) => {
+                                    self.current_playing_id = Some(entry.id);
+                                }
+                                Err(e) => {
+                                    eprintln!("[playback] Error starting playback: {e}");
+                                }
+                            }
+                        } else {
+                            eprintln!("[playback] WAV file not found: {}", wav_path);
+                        }
+                    }
+                } else {
+                    // Play new file - use .wav file
+                    if std::path::Path::new(&wav_path).exists() {
+                        match player.play(&wav_path) {
+                            Ok(_) => {
+                                self.current_playing_id = Some(entry.id);
+                            }
+                            Err(e) => {
+                                eprintln!("[playback] Error starting playback: {e}");
+                            }
+                        }
+                    } else {
+                        eprintln!("[playback] WAV file not found: {}", wav_path);
+                    }
+                }
+            } else {
+                eprintln!("[playback] Audio player backend is not available");
+            }
+        }
+    }
+
+    fn stop_playback(&mut self) {
+        #[cfg(feature = "audio-playback")]
+        {
+            if let Some(ref mut player) = self.audio_player {
+                player.stop();
+            }
+            self.current_playing_id = None;
+        }
+    }
+
+    fn delete_recording(&mut self, recording_id: i64) {
+        eprintln!(
+            "[delete] Iniciando eliminación de grabación {}",
+            recording_id
+        );
+
+        // Find the recording to get file paths
+        let recording = self
+            .recordings
+            .iter()
+            .find(|r| r.id == recording_id)
+            .cloned();
+
+        if let Some(rec) = recording {
+            // Delete associated files
+            let base_path = rec.filepath.replace(".txt", "");
+
+            // Files to delete
+            let files_to_delete = vec![
+                format!("{}.txt", base_path),
+                format!("{}.wav", base_path),
+                format!("{}.mp3", base_path),
+                format!("{}.flac", base_path),
+            ];
+
+            for file_path in files_to_delete {
+                if std::path::Path::new(&file_path).exists() {
+                    match std::fs::remove_file(&file_path) {
+                        Ok(_) => eprintln!("[delete] Archivo eliminado: {}", file_path),
+                        Err(e) => eprintln!("[delete] Error eliminando {}: {}", file_path, e),
+                    }
+                }
+            }
+
+            // Delete from database
+            if let Some(db) = &self.db {
+                match db.delete_recording(recording_id) {
+                    Ok(_) => {
+                        eprintln!(
+                            "[delete] Grabación {} eliminada de la base de datos",
+                            recording_id
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("[delete] Error eliminando de DB: {}", e);
+                    }
+                }
+            }
+
+            // Clear from cache
+            self.summaries_cache.remove(&recording_id);
+
+            // Reload recordings list
+            self.reload_recordings();
+
+            // If currently playing this recording, stop playback
+            if self.current_playing_id == Some(recording_id) {
+                self.stop_playback();
+            }
+
+            // If this was expanded, collapse it
+            if self.expanded_recording_id == Some(recording_id) {
+                self.expanded_recording_id = None;
+            }
+
+            eprintln!(
+                "[delete] Eliminación completada para grabación {}",
+                recording_id
+            );
+        }
+    }
+
+    fn export_recording_transcript(&self, entry: &RecordingEntry, format: &str) {
+        let folder = std::path::Path::new(&entry.filepath)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let transcript_text = std::fs::read_to_string(&entry.filepath).unwrap_or_default();
+
+        // Load segments and highlights from database for SRT/VTT/JSON
+        let db_path = dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("Scrivano")
+            .join("recordings.db");
+
+        let (segments, highlights) = if let Ok(db) = Database::open(&db_path) {
+            let segs = db.get_segments_by_recording(entry.id).unwrap_or_default();
+            let highs = db.get_highlights_by_recording(entry.id).unwrap_or_default();
+            (segs, highs)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+
+        let (final_text, ext) = match format {
+            "txt" => (transcript_text.clone(), "txt"),
+            "md" => {
+                let mut content = format!(
+                    "# {}\n\n**Fecha:** {}\n**Duración:** {}\n**Tags:** {}\n\n---\n\n",
+                    entry.title.as_ref().unwrap_or(&entry.filename),
+                    entry.created_at,
+                    entry.duration_display(),
+                    entry.tags.as_ref().unwrap_or(&"Sin tags".to_string())
+                );
+
+                // Add highlights section if available
+                if !highlights.is_empty() {
+                    content.push_str("## Highlights\n\n");
+                    for highlight in &highlights {
+                        let time_str = format_time_simple(highlight.timestamp_sec);
+                        let label_str = highlight
+                            .label
+                            .as_ref()
+                            .map(|l| format!(" - {}", l))
+                            .unwrap_or_default();
+                        content.push_str(&format!("- **{}**{}\n", time_str, label_str));
+                    }
+                    content.push_str("\n---\n\n");
+                }
+
+                content.push_str(&transcript_text);
+                (content, "md")
+            }
+            "json" => {
+                let json = serde_json::json!({
+                    "recording": {
+                        "filename": entry.filename,
+                        "created_at": entry.created_at,
+                        "duration_secs": entry.duration_secs,
+                        "title": entry.title,
+                        "tags": entry.tags,
+                    },
+                    "highlights": highlights.iter().map(|h| {
+                        serde_json::json!({
+                            "timestamp_sec": h.timestamp_sec,
+                            "label": h.label,
+                        })
+                    }).collect::<Vec<_>>(),
+                    "segments": segments.iter().map(|s| {
+                        serde_json::json!({
+                            "start_sec": s.start_sec,
+                            "end_sec": s.end_sec,
+                            "text": s.text,
+                        })
+                    }).collect::<Vec<_>>(),
+                });
+                (
+                    serde_json::to_string_pretty(&json).unwrap_or_default(),
+                    "json",
+                )
+            }
+            "srt" => {
+                // Generate SRT with real timestamps from segments
+                let mut srt_content = String::new();
+                if !segments.is_empty() {
+                    for (i, segment) in segments.iter().enumerate() {
+                        let start = format_srt_timestamp(segment.start_sec);
+                        let end = format_srt_timestamp(segment.end_sec);
+                        srt_content.push_str(&format!(
+                            "{}\n{} --> {}\n{}\n\n",
+                            i + 1,
+                            start,
+                            end,
+                            segment.text
+                        ));
+                    }
+                } else {
+                    // Fallback: create a single entry with full text
+                    srt_content =
+                        format!("1\n00:00:00,000 --> 00:00:00,000\n{}\n\n", transcript_text);
+                }
+                (srt_content, "srt")
+            }
+            "vtt" => {
+                // Generate WebVTT with real timestamps from segments
+                let mut vtt_content = "WEBVTT\n\n".to_string();
+                if !segments.is_empty() {
+                    for (i, segment) in segments.iter().enumerate() {
+                        let start = format_vtt_timestamp(segment.start_sec);
+                        let end = format_vtt_timestamp(segment.end_sec);
+                        vtt_content.push_str(&format!(
+                            "{}\n{} --> {}\n{}\n\n",
+                            i + 1,
+                            start,
+                            end,
+                            segment.text
+                        ));
+                    }
+                } else {
+                    // Fallback: create a single entry with full text
+                    vtt_content = format!(
+                        "WEBVTT\n\n1\n00:00:00.000 --> 00:00:00.000\n{}\n\n",
+                        transcript_text
+                    );
+                }
+                (vtt_content, "vtt")
+            }
+            _ => (transcript_text, "txt"),
+        };
+
+        let output_path = format!("{}/export_{}_{}.{}", folder, entry.id, timestamp, ext);
+        if std::fs::write(&output_path, &final_text).is_ok() {
+            let _ = std::process::Command::new("xdg-open")
+                .arg(&output_path)
+                .spawn();
+        }
+    }
+
+    fn export_recording_audio(&self, entry: &RecordingEntry, format: &str) {
+        let output_path = entry.filepath.replace(".txt", &format!(".{}", format));
+        if std::path::Path::new(&output_path).exists() {
+            let parent = std::path::Path::new(&output_path)
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default();
+            let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
+        }
+    }
+
+    fn generate_summary_for_recording(&mut self, recording_id: i64, template: &str) {
+        eprintln!("[summary] ===== INICIANDO GENERACIÓN =====");
+        eprintln!(
+            "[summary] Recording ID: {}, Template: {}",
+            recording_id, template
+        );
+
+        if !self.ollama_available {
+            eprintln!("[summary] ERROR: Ollama no está disponible");
+            return;
+        }
+
+        let entry = self
+            .recordings
+            .iter()
+            .find(|e| e.id == recording_id)
+            .cloned();
+        if let Some(entry) = entry {
+            eprintln!(
+                "[summary] Found entry: {} ({})",
+                entry.filename, entry.filepath
+            );
+            let transcript = std::fs::read_to_string(&entry.filepath).unwrap_or_default();
+            eprintln!("[summary] Transcript length: {} chars", transcript.len());
+            if transcript.is_empty() {
+                eprintln!("[summary] ERROR: Transcripción vacía");
+                return;
+            }
+
+            // Use summary model from settings, fallback to ollama model
+            let model = if !self.settings.summary_model.is_empty() {
+                self.settings.summary_model.clone()
+            } else {
+                self.ollama_models
+                    .get(self.ollama_selected_index)
+                    .cloned()
+                    .unwrap_or_else(|| "llama3.2".to_string())
+            };
+
+            let summary_template = match template {
+                "executive" => crate::summarization::SummaryTemplate::Executive,
+                "complete" => crate::summarization::SummaryTemplate::Complete,
+                "tasks" => crate::summarization::SummaryTemplate::Tasks,
+                "jira" => crate::summarization::SummaryTemplate::Jira,
+                "decisions" => crate::summarization::SummaryTemplate::Decisions,
+                _ => crate::summarization::SummaryTemplate::Executive,
+            };
+
+            // Mark this summary as generating
+            {
+                let mut gen = self.generating_summaries.lock().unwrap();
+                gen.entry(recording_id)
+                    .or_insert_with(Vec::new)
+                    .push(template.to_string());
+            }
+
+            // Clear cache to force reload when generation completes
+            self.summaries_cache.remove(&recording_id);
+
+            // Get custom prompt from settings if available (clone for thread)
+            let custom_prompt_str: Option<String> = match template {
+                "executive" => {
+                    let s = &self.settings.custom_prompt_executive;
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s.clone())
+                    }
+                }
+                "tasks" => {
+                    let s = &self.settings.custom_prompt_tasks;
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s.clone())
+                    }
+                }
+                "decisions" => {
+                    let s = &self.settings.custom_prompt_decisions;
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s.clone())
+                    }
+                }
+                _ => None,
+            };
+
+            self.current_summary_recording_id = Some(recording_id);
+            let recording_id_copy = recording_id;
+            let template_string = template.to_string();
+            let model_clone = model.to_string();
+            let db_path = dirs::config_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("Scrivano")
+                .join("recordings.db");
+            let generating_clone = self.generating_summaries.clone();
+            let complete_flag = self.summary_generation_complete.clone();
+
+            std::thread::spawn(move || {
+                let client = crate::ollama::OllamaClient::new("localhost", 11434);
+
+                // Convert Option<String> to Option<String> (owned) for the thread
+                let custom_prompt_ref: Option<String> = custom_prompt_str;
+
+                let result = crate::summarization::generate_summary(
+                    &client,
+                    &transcript,
+                    summary_template,
+                    &model_clone,
+                    custom_prompt_ref.as_deref(),
+                );
+
+                match result {
+                    Ok(summary_result) => {
+                        eprintln!("[summary] ===== RESUMEN GENERADO =====");
+                        eprintln!(
+                            "[summary] Template: {}, Recording: {}",
+                            template_string, recording_id_copy
+                        );
+                        eprintln!(
+                            "[summary] Content length: {} chars",
+                            summary_result.content.len()
+                        );
+                        eprintln!(
+                            "[summary] Content preview: '{}'",
+                            summary_result
+                                .content
+                                .chars()
+                                .take(100)
+                                .collect::<String>()
+                                .replace('\n', " ")
+                        );
+                        eprintln!(
+                            "[summary] Is thinking model: {}, Has raw_thinking: {}",
+                            summary_result.is_thinking_model,
+                            summary_result.raw_thinking.is_some()
+                        );
+
+                        if summary_result.content.is_empty() {
+                            eprintln!("[summary] WARNING: Content is EMPTY!");
+                        }
+
+                        // Save summary to database
+                        eprintln!("[summary] Opening database at {:?}", db_path);
+                        if let Ok(db) = Database::open(&db_path) {
+                            eprintln!("[summary] Database opened successfully");
+                            match db.insert_summary(
+                                recording_id_copy,
+                                &template_string,
+                                &summary_result.content,
+                                Some(&summary_result.model_name),
+                                summary_result.is_thinking_model,
+                                summary_result.raw_thinking.as_deref(),
+                            ) {
+                                Ok(id) => {
+                                    eprintln!("[summary] Guardado en BD exitosamente, ID: {}", id);
+                                }
+                                Err(e) => {
+                                    eprintln!("[summary] ERROR guardando en BD: {}", e);
+                                }
+                            }
+                        } else {
+                            eprintln!("[summary] ERROR: No se pudo abrir la base de datos");
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[summary] ===== ERROR GENERANDO RESUMEN =====");
+                        eprintln!("[summary] Error: {:?}", e);
+                    }
+                }
+
+                // Remove from generating list and mark complete
+                {
+                    let mut gen = generating_clone.lock().unwrap();
+                    if let Some(templates) = gen.get_mut(&recording_id_copy) {
+                        templates.retain(|t| t != &template_string);
+                        if templates.is_empty() {
+                            gen.remove(&recording_id_copy);
+                        }
+                    }
+                }
+                eprintln!("[summary] Setting complete flag to trigger UI reload");
+                complete_flag.store(true, Ordering::SeqCst);
+                eprintln!("[summary] ===== THREAD COMPLETE =====");
+            });
+        } else {
+            eprintln!(
+                "[summary] ERROR: No se encontró la grabación con ID {}",
+                recording_id
+            );
+        }
+    }
+
     fn start_recording(&mut self) {
         self.audio_buffer.lock().unwrap().clear();
         self.waveform_buffer.lock().unwrap().clear();
@@ -2142,6 +3286,7 @@ impl App {
 
             *transcript.lock().unwrap() = raw_text.clone();
 
+>>>>>>> Stashed changes
             // ── Paso 2: Mejora con Ollama (opcional) ─────────────────────────
             let ollama_model_used: Option<String>;
             let final_text = if ollama_enabled
@@ -2344,6 +3489,7 @@ impl App {
     // ── Settings tab ─────────────────────────────────────────────────────────
 
     fn show_settings_tab(&mut self, ui: &mut egui::Ui) {
+<<<<<<< Updated upstream
         egui::ScrollArea::vertical()
             .id_source("settings_scroll")
             .show(ui, |ui| {
@@ -2493,11 +3639,208 @@ impl App {
                     )
                     .size(12.0)
                     .color(TEXT_MUTED),
-                );
+=======
+        // Main layout: sidebar (left) + content (right)
+        egui::SidePanel::left("settings_sidebar")
+            .exact_width(160.0)
+            .frame(
+                egui::Frame::none()
+                    .fill(BG_PANEL)
+                    .stroke(Stroke::new(1.0, BORDER))
+                    .inner_margin(egui::Margin::symmetric(8.0, 16.0)),
+            )
+            .show_inside(ui, |ui| {
+                self.render_settings_sidebar(ui);
+            });
 
+<<<<<<< HEAD
                     ui.add_space(24.0);
                     ui.separator();
                     ui.add_space(16.0);
+=======
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(16.0, 16.0)))
+            .show_inside(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_source("settings_scroll")
+                    .show(ui, |ui| match self.settings_section {
+                        SettingsSection::Audio => self.render_audio_settings(ui),
+                        SettingsSection::Transcription => self.render_transcription_settings(ui),
+                        SettingsSection::Ai => self.render_ai_settings(ui),
+                        SettingsSection::Summaries => self.render_summaries_settings(ui),
+                        SettingsSection::Prompts => self.render_prompts_settings(ui),
+                        SettingsSection::System => self.render_system_settings(ui),
+                    });
+            });
+    }
+
+    fn render_settings_sidebar(&mut self, ui: &mut egui::Ui) {
+        let sections = [
+            (SettingsSection::Audio, ICON_MIC, "Audio"),
+            (
+                SettingsSection::Transcription,
+                ICON_TRANSCRIPT,
+                "Transcripción",
+            ),
+            (SettingsSection::Ai, ICON_MAGIC, "AI / Ollama"),
+            (SettingsSection::Summaries, ICON_FILE, "Resúmenes"),
+            (SettingsSection::Prompts, ICON_AUDIO, "Prompts"),
+            (SettingsSection::System, ICON_SETTINGS, "Sistema"),
+        ];
+
+        for (section, icon, label) in sections {
+            let is_active = self.settings_section == section;
+
+            let (bg, fg) = if is_active {
+                (ACCENT_BLUE, Color32::WHITE)
+            } else {
+                (Color32::TRANSPARENT, TEXT_DIM)
+            };
+
+            let btn = egui::Button::new(
+                RichText::new(format!("{}  {}", icon, label))
+                    .size(13.0)
+                    .color(fg),
+            )
+            .fill(bg)
+            .stroke(if is_active {
+                Stroke::new(0.0, Color32::TRANSPARENT)
+            } else {
+                Stroke::NONE
+            })
+            .rounding(6.0)
+            .min_size(egui::vec2(ui.available_width(), 36.0));
+
+            if ui.add(btn).clicked() {
+                self.settings_section = section;
+            }
+            ui.add_space(4.0);
+        }
+
+        // Add flexible space to push save button to bottom
+        ui.add_space(ui.available_height() - 60.0);
+
+        // Save button in sidebar
+        ui.separator();
+        ui.add_space(8.0);
+        ui.vertical_centered(|ui| {
+            let save_btn = egui::Button::new(
+                RichText::new(format!("{} Guardar", ICON_CHECK))
+                    .size(13.0)
+                    .color(Color32::WHITE),
+            )
+            .fill(ACCENT_GREEN)
+            .rounding(6.0)
+            .min_size(egui::vec2(120.0, 32.0));
+
+            if ui.add(save_btn).clicked() {
+                self.settings.input_device_id = self
+                    .input_devices
+                    .get(self.selected_input_index)
+                    .map(|(_, id)| id.clone());
+                self.settings.output_device_id = self
+                    .output_devices
+                    .get(self.selected_output_index)
+                    .map(|(_, id)| id.clone());
+                if let Some((_, path)) = self.available_models.get(self.selected_model_index) {
+                    self.settings.whisper_model = path.clone();
+                }
+                self.settings.ollama_enabled = self.ollama_enabled;
+                self.settings.ollama_model = self
+                    .ollama_models
+                    .get(self.ollama_selected_index)
+                    .cloned()
+                    .unwrap_or_default();
+                self.model_changed = false;
+
+                if let Err(e) = self.settings.save() {
+                    self.config_save_notification = Some((format!("Error: {}", e), true));
+                } else {
+                    self.config_save_notification =
+                        Some(("Configuración guardada".to_string(), false));
+                }
+            }
+
+            if let Some((msg, is_error)) = &self.config_save_notification {
+                ui.add_space(6.0);
+                ui.label(RichText::new(msg).size(11.0).color(if *is_error {
+                    ACCENT_RED
+                } else {
+                    ACCENT_GREEN
+                }));
+            }
+        });
+    }
+
+    fn render_audio_settings(&mut self, ui: &mut egui::Ui) {
+        let combo_width = |ui: &mut egui::Ui| ui.available_width();
+
+        let card = egui::Frame::none()
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(20.0, 16.0));
+
+        card.show(ui, |ui| {
+            ui.label(
+                RichText::new(format!("{}  Dispositivos de Audio", ICON_MIC))
+                    .size(16.0)
+                    .strong()
+                    .color(ACCENT_BLUE),
+            );
+            ui.add_space(16.0);
+
+            // Refresh button
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("↻ Actualizar dispositivos").size(13.0))
+                        .fill(Color32::from_rgb(35, 45, 60))
+                        .stroke(Stroke::new(1.0, BORDER))
+                        .rounding(6.0)
+                        .min_size(egui::vec2(160.0, 28.0)),
+                )
+                .clicked()
+            {
+                self.refresh_audio_devices();
+            }
+
+            ui.add_space(20.0);
+
+            // Input device
+            ui.label(RichText::new("Micrófono").size(13.0).color(TEXT_DIM));
+            ui.add_space(6.0);
+            if self.input_devices.is_empty() {
+                ui.label(
+                    RichText::new("No se encontraron dispositivos de entrada")
+                        .size(12.0)
+                        .color(TEXT_DIM),
+>>>>>>> Stashed changes
+                );
+            } else {
+                let current_input = self
+                    .input_devices
+                    .get(self.selected_input_index)
+                    .map(|(n, _)| n.as_str())
+                    .unwrap_or("—");
+                egui::ComboBox::from_id_source("input_device_combo")
+                    .selected_text(RichText::new(current_input).size(14.0))
+                    .width(combo_width(ui))
+                    .show_ui(ui, |ui| {
+                        for (i, (name, _)) in self.input_devices.iter().enumerate() {
+                            let selected = i == self.selected_input_index;
+                            if ui
+                                .selectable_label(selected, RichText::new(name).size(14.0))
+                                .clicked()
+                            {
+                                self.selected_input_index = i;
+                            }
+                        }
+                    });
+            }
+
+<<<<<<< Updated upstream
+                ui.add_space(16.0);
+>>>>>>> develop
 
                     // ── Section: Ollama ───────────────────────────────────────────
                     section_header(ui, "✨  Mejora con Ollama");
@@ -2888,7 +4231,459 @@ impl App {
 
                     ui.add_space(16.0);
                 });
+<<<<<<< HEAD
+=======
+
+                ui.add_space(16.0);
+=======
+            ui.add_space(16.0);
+
+            // Output device
+            ui.label(
+                RichText::new("Audio del sistema")
+                    .size(13.0)
+                    .color(TEXT_DIM),
+            );
+            ui.add_space(6.0);
+            if self.output_devices.is_empty() {
+                ui.label(
+                    RichText::new("No se encontraron dispositivos de salida")
+                        .size(12.0)
+                        .color(TEXT_DIM),
+                );
+            } else {
+                let current_output = self
+                    .output_devices
+                    .get(self.selected_output_index)
+                    .map(|(n, _)| n.as_str())
+                    .unwrap_or("—");
+                egui::ComboBox::from_id_source("output_device_combo")
+                    .selected_text(RichText::new(current_output).size(14.0))
+                    .width(combo_width(ui))
+                    .show_ui(ui, |ui| {
+                        for (i, (name, _)) in self.output_devices.iter().enumerate() {
+                            let selected = i == self.selected_output_index;
+                            if ui
+                                .selectable_label(selected, RichText::new(name).size(14.0))
+                                .clicked()
+                            {
+                                self.selected_output_index = i;
+                            }
+                        }
+                    });
+            }
+        });
+    }
+
+    fn render_transcription_settings(&mut self, ui: &mut egui::Ui) {
+        let combo_width = |ui: &mut egui::Ui| ui.available_width();
+
+        let card = egui::Frame::none()
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(20.0, 16.0));
+
+        card.show(ui, |ui| {
+            ui.label(
+                RichText::new(format!("{}  Modelo de Transcripción", ICON_TRANSCRIPT))
+                    .size(16.0)
+                    .strong()
+                    .color(ACCENT_BLUE),
+            );
+            ui.add_space(16.0);
+
+            ui.label(RichText::new("Modelo Whisper").size(13.0).color(TEXT_DIM));
+            ui.add_space(6.0);
+            if self.available_models.is_empty() {
+                ui.label(
+                    RichText::new("No se encontraron modelos")
+                        .size(13.0)
+                        .color(ACCENT_RED),
+                );
+            } else {
+                let current_name = self
+                    .available_models
+                    .get(self.selected_model_index)
+                    .map(|(n, _)| n.as_str())
+                    .unwrap_or("—");
+                egui::ComboBox::from_id_source("whisper_model_combo")
+                    .selected_text(RichText::new(current_name).size(14.0))
+                    .width(combo_width(ui))
+                    .show_ui(ui, |ui| {
+                        for (i, (name, _)) in self.available_models.iter().enumerate() {
+                            let selected = i == self.selected_model_index;
+                            if ui
+                                .selectable_label(selected, RichText::new(name).size(14.0))
+                                .clicked()
+                                && i != self.selected_model_index
+                            {
+                                self.selected_model_index = i;
+                                self.model_changed = true;
+                            }
+                        }
+                    });
+            }
+            if self.model_changed {
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("⚠ El cambio de modelo se aplicará al reiniciar la aplicación")
+                        .size(11.0)
+                        .color(Color32::from_rgb(255, 200, 60)),
+                );
+            }
+
+            ui.add_space(12.0);
+
+            ui.label(
+                RichText::new(
+                    "Los modelos más grandes son más precisos pero requieren más memoria y tiempo de procesamiento.",
+                )
+                .size(11.0)
+                .color(TEXT_MUTED),
+            );
+        });
+    }
+
+    fn render_ai_settings(&mut self, ui: &mut egui::Ui) {
+        let combo_width = |ui: &mut egui::Ui| ui.available_width();
+
+        let card = egui::Frame::none()
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(20.0, 16.0));
+
+        card.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{}  Ollama", ICON_MAGIC))
+                        .size(16.0)
+                        .strong()
+                        .color(ACCENT_PURPLE),
+                );
+                ui.add_space(8.0);
+                if self.ollama_available {
+                    ui.label(RichText::new("●").size(12.0).color(ACCENT_GREEN));
+                    ui.label(RichText::new("Conectado").size(12.0).color(ACCENT_GREEN));
+                } else {
+                    ui.label(RichText::new("●").size(12.0).color(ACCENT_RED));
+                    ui.label(RichText::new("No detectado").size(12.0).color(ACCENT_RED));
+                }
+>>>>>>> develop
             });
+            ui.add_space(16.0);
+
+            if !self.ollama_available {
+                ui.label(
+                    RichText::new("Instala Ollama (ollama.com) para mejorar transcripciones")
+                        .size(13.0)
+                        .color(TEXT_DIM),
+                );
+            } else {
+                let ollama_color = if self.ollama_enabled {
+                    TEXT_PRIMARY
+                } else {
+                    TEXT_DIM
+                };
+                ui.checkbox(
+                    &mut self.ollama_enabled,
+                    RichText::new("Mejorar transcripciones con Ollama")
+                        .size(14.0)
+                        .color(ollama_color),
+                );
+
+                ui.add_space(16.0);
+
+                if self.ollama_enabled {
+                    ui.label(
+                        RichText::new("Modelo para mejora")
+                            .size(13.0)
+                            .color(TEXT_DIM),
+                    );
+                    ui.add_space(6.0);
+                    if self.ollama_models.is_empty() {
+                        ui.label(
+                            RichText::new("Sin modelos instalados. Ejecuta: ollama pull llama3.2")
+                                .size(12.0)
+                                .color(ACCENT_RED),
+                        );
+                    } else {
+                        let current_name = self
+                            .ollama_models
+                            .get(self.ollama_selected_index)
+                            .cloned()
+                            .unwrap_or_default();
+                        egui::ComboBox::from_id_source("ollama_model_combo")
+                            .selected_text(RichText::new(&current_name).size(14.0))
+                            .width(combo_width(ui))
+                            .show_ui(ui, |ui| {
+                                for (i, name) in self.ollama_models.iter().enumerate() {
+                                    let selected = i == self.ollama_selected_index;
+                                    if ui
+                                        .selectable_label(selected, RichText::new(name).size(14.0))
+                                        .clicked()
+                                    {
+                                        self.ollama_selected_index = i;
+                                    }
+                                }
+                            });
+                    }
+
+                    ui.add_space(12.0);
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("↻ Actualizar modelos").size(13.0))
+                                .fill(Color32::from_rgb(35, 45, 60))
+                                .stroke(Stroke::new(1.0, BORDER))
+                                .rounding(6.0)
+                                .min_size(egui::vec2(140.0, 28.0)),
+                        )
+                        .clicked()
+                    {
+                        self.ollama_models = ollama::list_models();
+                        self.ollama_selected_index = self
+                            .ollama_selected_index
+                            .min(self.ollama_models.len().saturating_sub(1));
+                    }
+                }
+            }
+        });
+    }
+
+    fn render_summaries_settings(&mut self, ui: &mut egui::Ui) {
+        let combo_width = |ui: &mut egui::Ui| ui.available_width();
+
+        let card = egui::Frame::none()
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(20.0, 16.0));
+
+        card.show(ui, |ui| {
+            ui.label(
+                RichText::new(format!("{}  Modelo para Resúmenes", ICON_FILE))
+                    .size(16.0)
+                    .strong()
+                    .color(ACCENT_GREEN),
+            );
+            ui.add_space(16.0);
+
+            if !self.ollama_available {
+                ui.label(
+                    RichText::new("Ollama no está disponible. Los resúmenes requieren Ollama.")
+                        .size(13.0)
+                        .color(TEXT_DIM),
+                );
+            } else if self.ollama_models.is_empty() {
+                ui.label(
+                    RichText::new("No hay modelos instalados en Ollama.")
+                        .size(13.0)
+                        .color(ACCENT_RED),
+                );
+            } else {
+                ui.label(
+                    RichText::new("Modelo para generar resúmenes")
+                        .size(13.0)
+                        .color(TEXT_DIM),
+                );
+                ui.add_space(6.0);
+                let current_summary_model = &self.settings.summary_model;
+                let summary_idx = self
+                    .ollama_models
+                    .iter()
+                    .position(|m| m == current_summary_model)
+                    .unwrap_or(0);
+                egui::ComboBox::from_id_source("summary_model_combo")
+                    .selected_text(RichText::new(current_summary_model).size(14.0))
+                    .width(combo_width(ui))
+                    .show_ui(ui, |ui| {
+                        for (i, name) in self.ollama_models.iter().enumerate() {
+                            let selected = i == summary_idx;
+                            if ui
+                                .selectable_label(selected, RichText::new(name).size(14.0))
+                                .clicked()
+                            {
+                                self.settings.summary_model = name.clone();
+                            }
+                        }
+                    });
+
+                ui.add_space(12.0);
+                ui.label(
+                    RichText::new(
+                        "Puedes usar un modelo diferente para resúmenes que el usado para mejorar transcripciones.",
+                    )
+                    .size(11.0)
+                    .color(TEXT_MUTED),
+                );
+            }
+        });
+    }
+
+    fn render_prompts_settings(&mut self, ui: &mut egui::Ui) {
+        let card = egui::Frame::none()
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(20.0, 16.0));
+
+        card.show(ui, |ui| {
+            ui.label(
+                RichText::new(format!("{}  Prompts Personalizados", ICON_AUDIO))
+                    .size(16.0)
+                    .strong()
+                    .color(TEXT_PRIMARY),
+            );
+            ui.add_space(16.0);
+
+            let prompt_sections = [
+                (
+                    "Resumen Ejecutivo",
+                    &mut self.settings.custom_prompt_executive,
+                    "Describe el prompt personalizado para resúmenes ejecutivos...",
+                    "Genera un resumen ejecutivo conciso enfocado en los puntos clave, decisiones y próximos pasos.",
+                ),
+                (
+                    "Lista de Tareas",
+                    &mut self.settings.custom_prompt_tasks,
+                    "Describe el prompt personalizado para extraer tareas...",
+                    "Extrae todas las tareas asignadas mencionadas en la transcripción, indicando quién debe hacer qué.",
+                ),
+                (
+                    "Decisiones",
+                    &mut self.settings.custom_prompt_decisions,
+                    "Describe el prompt personalizado para extraer decisiones...",
+                    "Identifica y lista todas las decisiones importantes tomadas durante la reunión.",
+                ),
+            ];
+
+            for (title, value, hint, default_desc) in prompt_sections {
+                egui::CollapsingHeader::new(
+                    RichText::new(title).size(14.0).color(ACCENT_BLUE),
+                )
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("Descripción por defecto:")
+                            .size(11.0)
+                            .color(TEXT_DIM),
+                    );
+                    ui.label(
+                        RichText::new(default_desc)
+                            .size(11.0)
+                            .color(TEXT_MUTED),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new("Prompt personalizado (dejar vacío para usar el predeterminado):")
+                            .size(12.0)
+                            .color(TEXT_DIM),
+                    );
+                    ui.add_space(4.0);
+                    ui.add_sized(
+                        egui::vec2(ui.available_width(), 80.0),
+                        egui::TextEdit::multiline(value)
+                            .font(FontId::proportional(12.0))
+                            .hint_text(hint),
+                    );
+                    ui.add_space(12.0);
+                });
+                ui.add_space(8.0);
+            }
+        });
+    }
+
+    fn render_system_settings(&mut self, ui: &mut egui::Ui) {
+        let card = egui::Frame::none()
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(20.0, 16.0));
+
+        card.show(ui, |ui| {
+            ui.label(
+                RichText::new(format!("{}  Configuración del Sistema", ICON_SETTINGS))
+                    .size(16.0)
+                    .strong()
+                    .color(ACCENT_GREEN),
+            );
+            ui.add_space(16.0);
+
+            // Language
+            ui.label(
+                RichText::new("Idioma de la interfaz")
+                    .size(13.0)
+                    .color(TEXT_DIM),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_source("language_combo")
+                    .selected_text(RichText::new(&self.settings.language_default).size(14.0))
+                    .width(120.0)
+                    .show_ui(ui, |ui| {
+                        for lang in ["es", "en"] {
+                            let selected = self.settings.language_default == lang;
+                            if ui
+                                .selectable_label(selected, RichText::new(lang).size(14.0))
+                                .clicked()
+                            {
+                                self.settings.language_default = lang.to_string();
+                            }
+                        }
+                    });
+            });
+
+            ui.add_space(20.0);
+
+            // Hotkeys
+            ui.label(
+                RichText::new("Atajos de teclado")
+                    .size(13.0)
+                    .color(TEXT_DIM),
+            );
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Iniciar/Detener:").size(12.0).color(TEXT_DIM));
+                ui.add_space(6.0);
+                ui.add_sized(
+                    egui::vec2(140.0, 28.0),
+                    egui::TextEdit::singleline(&mut self.settings.hotkey_start_stop)
+                        .font(FontId::proportional(13.0)),
+                );
+>>>>>>> Stashed changes
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("Marcar highlight:")
+                        .size(12.0)
+                        .color(TEXT_DIM),
+                );
+                ui.add_space(6.0);
+                ui.add_sized(
+                    egui::vec2(140.0, 28.0),
+                    egui::TextEdit::singleline(&mut self.settings.hotkey_highlight)
+                        .font(FontId::proportional(13.0)),
+                );
+            });
+
+            ui.add_space(20.0);
+
+            // Folder
+            ui.label(
+                RichText::new("Carpeta de grabaciones")
+                    .size(13.0)
+                    .color(TEXT_DIM),
+            );
+            ui.add_space(6.0);
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.recordings_folder)
+                    .desired_width(f32::INFINITY)
+                    .font(FontId::proportional(14.0)),
+            );
+        });
     }
 
     // ── About tab ────────────────────────────────────────────────────────────
@@ -2924,7 +4719,7 @@ impl App {
                         FontId::proportional(13.0),
                         Color32::WHITE,
                     );
-                    ui.add_space(4.0);
+                    ui.add_space(8.0);
                     ui.label(
                         RichText::new("Transcripción local de audio · 100% offline")
                             .size(14.0)
@@ -2934,15 +4729,15 @@ impl App {
 
                 ui.add_space(20.0);
                 ui.separator();
-                ui.add_space(16.0);
+                ui.add_space(20.0);
 
                 // ── Feature cards ─────────────────────────────────────────────
                 ui.vertical_centered(|ui| {
                     ui.label(
-                        RichText::new("Características").size(16.0).color(TEXT_DIM),
+                        RichText::new("Características").size(15.0).color(TEXT_DIM),
                     );
                 });
-                ui.add_space(10.0);
+                ui.add_space(12.0);
 
                 let features = [
                     ("🎙", "Captura de audio del sistema", "Graba cualquier sonido que reproduzca tu computador via PulseAudio / PipeWire"),
@@ -2953,19 +4748,28 @@ impl App {
 
                 for (icon, title, desc) in &features {
                     about_feature_card(ui, icon, title, desc);
-                    ui.add_space(6.0);
+                    ui.add_space(12.0);
                 }
 
-                ui.add_space(16.0);
+                ui.add_space(8.0);
                 ui.separator();
-                ui.add_space(16.0);
+                ui.add_space(20.0);
 
                 // ── Tech stack ────────────────────────────────────────────────
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("Stack tecnológico").size(15.0).color(TEXT_DIM));
-                    ui.add_space(10.0);
+                });
+                ui.add_space(12.0);
+
+                // Wrap tech badges in a card frame for visual grouping
+                let tech_frame = egui::Frame::none()
+                    .fill(BG_CARD)
+                    .stroke(Stroke::new(1.0, BORDER))
+                    .rounding(12.0)
+                    .inner_margin(egui::Margin::symmetric(20.0, 16.0));
+                tech_frame.show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                        ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
                         for (label, color) in [
                             ("Rust", Color32::from_rgb(222, 90, 40)),
                             ("egui 0.27", ACCENT_BLUE),
@@ -2981,7 +4785,7 @@ impl App {
 
                 ui.add_space(20.0);
                 ui.separator();
-                ui.add_space(16.0);
+                ui.add_space(20.0);
 
                 // ── Author block ──────────────────────────────────────────────
                 ui.vertical_centered(|ui| {
@@ -2990,13 +4794,14 @@ impl App {
                             .size(13.0)
                             .color(TEXT_MUTED),
                     );
-                    ui.add_space(4.0);
+                    ui.add_space(8.0);
                     ui.label(
                         RichText::new("Gustavo Gutiérrez")
                             .size(18.0)
                             .strong()
                             .color(TEXT_PRIMARY),
                     );
+                    ui.add_space(4.0);
                     ui.label(
                         RichText::new("Bogotá, Colombia")
                             .size(13.0)
@@ -3004,7 +4809,7 @@ impl App {
                     );
                 });
 
-                ui.add_space(20.0);
+                ui.add_space(24.0);
             });
     }
 }
@@ -3144,14 +4949,15 @@ fn about_feature_card(ui: &mut egui::Ui, icon: &str, title: &str, desc: &str) {
     let frame = egui::Frame::none()
         .fill(BG_CARD)
         .stroke(Stroke::new(1.0, BORDER))
-        .rounding(8.0)
-        .inner_margin(egui::Margin::symmetric(14.0, 10.0));
+        .rounding(12.0)
+        .inner_margin(egui::Margin::symmetric(20.0, 16.0));
     frame.show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new(icon).size(24.0));
-            ui.add_space(8.0);
+            ui.add_space(12.0);
             ui.vertical(|ui| {
                 ui.label(RichText::new(title).size(15.0).strong().color(TEXT_PRIMARY));
+                ui.add_space(4.0);
                 ui.label(RichText::new(desc).size(12.0).color(TEXT_DIM));
             });
         });
