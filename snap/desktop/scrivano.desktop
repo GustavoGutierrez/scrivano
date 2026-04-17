@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Scrivano
+Comment=Privacy-first audio recorder and transcriber for Linux
+Icon=${SNAP}/gui/icon.png
+Exec=scrivano
+Terminal=false
+Categories=AudioVideo;Audio;Recorder;Utility;
+Keywords=audio;record;transcribe;whisper;meeting;podcast;
+StartupNotify=true
+StartupWMClass=scrivano

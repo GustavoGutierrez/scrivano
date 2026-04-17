@@ -4,6 +4,8 @@
 
 # Scrivano
 
+[![Get it from the Snap Store](https://snapcraft.io/en/dark/install.svg)](https://snapcraft.io/scrivano)
+
 <p align="center">
   <strong>Scrivano</strong> es una aplicación de escritorio escrita en Rust que graba el **audio del sistema en Linux** (por ejemplo, llamadas de Google Meet, videollamadas, conferencias online) y lo transcribe automáticamente usando **Whisper** en modo local, sin enviar tu audio a la nube.
 

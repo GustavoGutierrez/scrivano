@@ -1,5 +1,5 @@
 name: scrivano
-version: '1.1.8'
+version: '1.1.9'
 title: Scrivano
 summary: Privacy-first audio recorder and transcriber for Linux
 description: |
@@ -42,7 +42,7 @@ description: |
 icon: gui/icon.png
 
 license: MIT
-contact: gustavo@example.com
+contact: https://www.linkedin.com/in/gustavo-gutierrez-mercado
 website: https://github.com/GustavoGutierrez/scrivano
 source-code: https://github.com/GustavoGutierrez/scrivano
 issues: https://github.com/GustavoGutierrez/scrivano/issues
@@ -276,7 +276,6 @@ parts:
       - bin/scrivano-wrapper
       - etc/asound.conf
 
-  # Iconos
   gui:
     plugin: dump
     source: gui/
@@ -287,9 +286,18 @@ parts:
     prime:
       - gui/
 
+  desktop:
+    plugin: dump
+    source: desktop
+    organize:
+      scrivano.desktop: scrivano.desktop
+    prime:
+      - scrivano.desktop
+
 apps:
   scrivano:
     command: bin/scrivano-wrapper
+    desktop: scrivano.desktop
     environment:
       SNAP_USER_DATA: "$SNAP_USER_DATA"
       LD_LIBRARY_PATH: "$SNAP/lib:$SNAP/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
