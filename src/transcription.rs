@@ -182,7 +182,7 @@ mod tests {
     #[test]
     #[ignore = "requires GGML model on disk"]
     fn transcribe_silence_returns_string() {
-        let ctx = init_whisper("models/ggml-tiny.bin");
+        let ctx = init_whisper("models/ggml-medium-q5_0.bin");
         let silence = vec![0.0_f32; 16_000 * 2];
         let result = transcribe(&ctx, &silence, |_| {});
         assert!(result.is_ok(), "transcribe must return Ok for silence");
@@ -191,7 +191,7 @@ mod tests {
     #[test]
     #[ignore = "requires GGML model on disk"]
     fn transcribe_empty_audio_does_not_panic() {
-        let ctx = init_whisper("models/ggml-tiny.bin");
+        let ctx = init_whisper("models/ggml-medium-q5_0.bin");
         let result = transcribe(&ctx, &[], |_| {});
         let _ = result;
     }

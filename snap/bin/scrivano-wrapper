@@ -3,13 +3,66 @@
 
 set -e
 
+if [ "${1:-}" = "--selftest" ]; then
+    export SCRIVANO_SELFTEST=1
+    shift
+fi
+
+export PATH="$SNAP/usr/bin:$SNAP/bin:$PATH"
 export LD_LIBRARY_PATH="$SNAP/lib:$SNAP/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu/pulseaudio:$LD_LIBRARY_PATH"
-export XKB_CONFIG_ROOT="$SNAP/xkb"
+if [ -d "$SNAP/lib/x86_64-linux-gnu/alsa-lib" ]; then
+    export ALSA_PLUGIN_DIR="$SNAP/lib/x86_64-linux-gnu/alsa-lib"
+elif [ -d "$SNAP/usr/lib/x86_64-linux-gnu/alsa-lib" ]; then
+    export ALSA_PLUGIN_DIR="$SNAP/usr/lib/x86_64-linux-gnu/alsa-lib"
+fi
 export LIBGL_DRIVERS_PATH="$SNAP/lib/x86_64-linux-gnu/dri"
 export DRI_DRIVER_DIR="$SNAP/lib/x86_64-linux-gnu/dri"
 export LIBGL_ALWAYS_SOFTWARE="1"
 export MESA_LOADER_DRIVER_OVERRIDE="swrast"
 export GTK_THEME="Adwaita"
+
+if [ -d "$SNAP/xkb" ]; then
+    export XKB_CONFIG_ROOT="$SNAP/xkb"
+elif [ -d "$SNAP/usr/share/X11/xkb" ]; then
+    export XKB_CONFIG_ROOT="$SNAP/usr/share/X11/xkb"
+else
+    export XKB_CONFIG_ROOT="/usr/share/X11/xkb"
+fi
+
+if [ -d "$SNAP/x11-locale" ]; then
+    export XLOCALEDIR="$SNAP/x11-locale"
+elif [ -d "$SNAP/usr/share/X11/locale" ]; then
+    export XLOCALEDIR="$SNAP/usr/share/X11/locale"
+else
+    export XLOCALEDIR="/usr/share/X11/locale"
+fi
+
+if [ -f "$SNAP/etc/asound.conf" ]; then
+    export ALSA_CONFIG_PATH="$SNAP/etc/asound.conf"
+    export ALSA_CONFIG_DIR="$SNAP/usr/share/alsa"
+elif [ -f "$SNAP/usr/share/alsa/alsa.conf" ]; then
+    export ALSA_CONFIG_PATH="$SNAP/usr/share/alsa/alsa.conf"
+    export ALSA_CONFIG_DIR="$SNAP/usr/share/alsa"
+else
+    export ALSA_CONFIG_PATH="/usr/share/alsa/alsa.conf"
+    export ALSA_CONFIG_DIR="/usr/share/alsa"
+fi
+
+if [ -z "${PULSE_SERVER:-}" ]; then
+    RUNTIME_UID="$(id -u)"
+    HOST_PULSE_SOCKET="/run/user/${RUNTIME_UID}/pulse/native"
+    SNAP_PULSE_SOCKET="${XDG_RUNTIME_DIR:-}/pulse/native"
+
+    if [ -S "$HOST_PULSE_SOCKET" ]; then
+        export PULSE_SERVER="unix:${HOST_PULSE_SOCKET}"
+    elif [ -S "$SNAP_PULSE_SOCKET" ]; then
+        export PULSE_SERVER="unix:${SNAP_PULSE_SOCKET}"
+    fi
+fi
+
+if [ -x "$SNAP/usr/bin/pactl" ]; then
+    export SCRIVANO_PACTL_PATH="$SNAP/usr/bin/pactl"
+fi
 
 MODELS_DIR="${SNAP_USER_DATA:-$HOME/.local/share/scrivano}/models"
 BUNDLED_MODELS_DIR="$SNAP/models"
@@ -38,10 +91,37 @@ ensure_model() {
     return 1
 }
 
-ensure_model "ggml-tiny.bin" || true
-ensure_model "ggml-small-q5_1.bin" || true
+ensure_model "ggml-medium-q5_0.bin" || true
 
 if [ "${SCRIVANO_SELFTEST:-0}" = "1" ]; then
+    echo "SNAP=${SNAP:-}"
+    echo "SNAP_USER_DATA=${SNAP_USER_DATA:-}"
+    echo "PULSE_SERVER=${PULSE_SERVER:-}"
+    echo "XKB_CONFIG_ROOT=${XKB_CONFIG_ROOT:-}"
+    echo "XLOCALEDIR=${XLOCALEDIR:-}"
+    echo "ALSA_CONFIG_PATH=${ALSA_CONFIG_PATH:-}"
+    echo "ALSA_PLUGIN_DIR=${ALSA_PLUGIN_DIR:-}"
+    if command -v snapctl >/dev/null 2>&1; then
+        for plug in audio-playback audio-record pulseaudio; do
+            if snapctl is-connected "$plug"; then
+                echo "plug:$plug=connected"
+            else
+                echo "plug:$plug=disconnected"
+            fi
+        done
+    fi
+    if command -v pactl >/dev/null 2>&1; then
+        pactl info || true
+    else
+        echo "pactl not found in runtime PATH"
+    fi
+    if command -v paplay >/dev/null 2>&1; then
+        paplay --version || true
+    elif command -v pacat >/dev/null 2>&1; then
+        pacat --version || true
+    else
+        echo "paplay/pacat not found in runtime PATH"
+    fi
     echo "Wrapper selftest complete"
     exit 0
 fi

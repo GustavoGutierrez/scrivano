@@ -22,8 +22,9 @@ mkdir -p snap/models
 mkdir -p snap/wrapper
 cp target/release/scrivano snap/dist-bin/
 chmod +x snap/wrapper/scrivano-wrapper
-cp models/ggml-tiny.bin snap/models/
-cp models/ggml-small-q5_1.bin snap/models/
+for model in models/*.bin; do
+  [ -f "$model" ] && cp "$model" snap/models/ || true
+done
 
 # Step 3: Build snap in destructive mode (builds on host)
 echo ""

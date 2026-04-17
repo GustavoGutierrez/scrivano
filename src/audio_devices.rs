@@ -306,10 +306,10 @@ pub fn scan_models() -> Vec<(String, String)> {
         // Fallback: use absolute path next to exe if possible
         let fallback = std::env::current_exe()
             .ok()
-            .and_then(|e| e.parent().map(|d| d.join("models/ggml-tiny.bin")))
-            .unwrap_or_else(|| std::path::PathBuf::from("models/ggml-tiny.bin"));
+            .and_then(|e| e.parent().map(|d| d.join("models/ggml-medium-q5_0.bin")))
+            .unwrap_or_else(|| std::path::PathBuf::from("models/ggml-medium-q5_0.bin"));
         models.push((
-            "ggml-tiny.bin".to_string(),
+            "ggml-medium-q5_0.bin".to_string(),
             fallback.to_string_lossy().into_owned(),
         ));
     }
@@ -371,7 +371,7 @@ impl Default for AppSettings {
             .into_iter()
             .next()
             .map(|(_, path)| path)
-            .unwrap_or_else(|| "models/ggml-tiny.bin".to_string());
+            .unwrap_or_else(|| "models/ggml-medium-q5_0.bin".to_string());
 
         Self {
             input_device_id: None,

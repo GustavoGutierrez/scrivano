@@ -91,8 +91,7 @@ ensure_model() {
     return 1
 }
 
-ensure_model "ggml-tiny.bin" || true
-ensure_model "ggml-small-q5_1.bin" || true
+ensure_model "ggml-medium-q5_0.bin" || true
 
 if [ "${SCRIVANO_SELFTEST:-0}" = "1" ]; then
     echo "SNAP=${SNAP:-}"

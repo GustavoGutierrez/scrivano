@@ -108,11 +108,9 @@ parts:
     source: models/
     source-type: local
     organize:
-      ggml-tiny.bin: models/ggml-tiny.bin
-      ggml-small-q5_1.bin: models/ggml-small-q5_1.bin
+      ggml-medium-q5_0.bin: models/ggml-medium-q5_0.bin
     prime:
-      - models/ggml-tiny.bin
-      - models/ggml-small-q5_1.bin
+      - models/ggml-medium-q5_0.bin
 
   # Librerías principales de Scrivano
   scrivano:
