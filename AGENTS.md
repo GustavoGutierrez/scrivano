@@ -350,3 +350,18 @@ cargo test
 ```
 
 Fix any warnings or test failures before committing.
+
+---
+
+## Project Skills
+
+This project includes specialized skills for common workflows:
+
+| Skill | Trigger | Description |
+|-------|--------|-------------|
+| `release-automation` | "create release", "make release", "nueva versión", "tag version" | Automate version bumping, git tags, and GitHub releases |
+| `snap-publish` | "publish snap", "snap store", "snapcraft upload" | Build and publish Scrivano to the Snap Store |
+| `prp-generator` | " PRP", "product requirements", "create PRP" | Generate Product Requirements Prompts for new features |
+| `rust-engineer` | Rust development, ownership/borrowing, async/tokio | Idiomatic Rust patterns, memory safety, async applications |
+
+**Loading skills**: Use the `skill` tool with the skill name when a matching task is identified.
