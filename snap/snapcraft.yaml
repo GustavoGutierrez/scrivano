@@ -39,6 +39,13 @@ description: |
   - No telemetry or tracking
   - Your recordings stay private
 
+  **After Installation:**
+  Once installed from the Snap Store, grant audio permissions by running:
+  ```
+  sudo snap connect scrivano:audio-record
+  sudo snap connect scrivano:pulseaudio
+  ```
+
 icon: gui/icon.png
 
 license: MIT
