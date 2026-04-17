@@ -37,6 +37,8 @@ const TEXT_PRIMARY: Color32 = Color32::from_rgb(230, 237, 243);
 const TEXT_DIM: Color32 = Color32::from_rgb(120, 130, 145);
 const TEXT_MUTED: Color32 = Color32::from_rgb(75, 85, 99);
 const BORDER: Color32 = Color32::from_rgb(40, 50, 65);
+const SETTINGS_CONTENT_MAX_WIDTH: f32 = 760.0;
+const SETTINGS_FIELD_MAX_WIDTH: f32 = 420.0;
 
 // Spectrum gradient stops (left → right): cyan → green → yellow
 const GRAD: [(f32, Color32); 4] = [
@@ -111,6 +113,16 @@ enum Tab {
     About,
 }
 
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+enum SettingsSection {
+    Audio,
+    Transcription,
+    Ollama,
+    Summaries,
+    Prompts,
+    System,
+}
+
 pub struct App {
     pub recording: Arc<AtomicBool>,
     pub audio_buffer: Arc<Mutex<Vec<f32>>>,
@@ -119,6 +131,7 @@ pub struct App {
     transcript_edit: String,
     whisper_ctx: Arc<WhisperContext>,
     active_tab: Tab,
+    settings_section: SettingsSection,
     input_devices: Vec<(String, String)>,
     output_devices: Vec<(String, String)>,
     selected_input_index: usize,
@@ -248,6 +261,7 @@ impl App {
             transcript_edit: initial,
             whisper_ctx: Arc::new(ctx),
             active_tab: Tab::Recording,
+            settings_section: SettingsSection::Audio,
             input_devices,
             output_devices,
             selected_input_index,
@@ -548,122 +562,183 @@ impl App {
         let transcribe_pct = self.transcribe_progress.load(Ordering::SeqCst);
         let ollama_pct = self.ollama_progress.load(Ordering::SeqCst);
 
-        ui.add_space(20.0);
-
-        // ── Big action button ────────────────────────────────────────────────
-        ui.vertical_centered(|ui| {
-            if is_busy {
-                let (label, pct) = if is_transcribing {
-                    let p = if transcribe_pct >= 0 {
-                        transcribe_pct
-                    } else {
-                        0
-                    };
-                    (format!("...  Transcribiendo...  {}%", p), p)
-                } else {
-                    let p = if ollama_pct >= 0 { ollama_pct } else { 0 };
-                    (
-                        format!("{}  Mejorando con Ollama...  {}%", ICON_MAGIC, p),
-                        p,
-                    )
-                };
-                ui.add_enabled_ui(false, |ui| {
-                    ui.add_sized(
-                        egui::vec2(340.0, 64.0),
-                        egui::Button::new(RichText::new(&label).size(18.0).color(TEXT_DIM))
-                            .fill(BG_PANEL),
-                    );
-                });
-                // Progress bar
-                ui.add_space(12.0);
-                let bar_width = 340.0_f32;
-                let bar_height = 8.0_f32;
-                let (bar_rect, _) =
-                    ui.allocate_exact_size(egui::vec2(bar_width, bar_height), Sense::hover());
-                ui.painter().rect_filled(bar_rect, 4.0, BG_PANEL);
-                let fill_w = bar_rect.width() * (pct as f32 / 100.0).clamp(0.0, 1.0);
-                if fill_w > 0.0 {
-                    let fill_rect =
-                        Rect::from_min_size(bar_rect.min, egui::vec2(fill_w, bar_height));
-                    let bar_color = if is_transcribing {
-                        ACCENT_BLUE
-                    } else {
-                        ACCENT_PURPLE
-                    };
-                    ui.painter().rect_filled(fill_rect, 4.0, bar_color);
-                }
-            } else if self.is_stopping {
-                // Mostrar botón deshabilitado mientras esperamos el delay
-                let elapsed = self
-                    .stop_requested_time
-                    .map(|t| t.elapsed().as_secs())
-                    .unwrap_or(0);
-                let btn = egui::Button::new(
-                    RichText::new(format!("⏳  Deteniendo... ({}s)", 3 - elapsed.min(3)))
-                        .size(20.0)
-                        .color(Color32::WHITE),
-                )
-                .fill(Color32::from_rgb(150, 60, 60))
-                .stroke(Stroke::new(2.0, ACCENT_RED_HOVER))
-                .rounding(10.0)
-                .sense(egui::Sense::hover()); // Deshabilitado
-
-                ui.add_sized(egui::vec2(320.0, 64.0), btn);
-
-                // Verificar si ya pasaron 3 segundos
-                if self
-                    .stop_requested_time
-                    .map(|t| t.elapsed().as_secs() >= 3)
-                    .unwrap_or(true)
-                {
-                    // Resetear estado y detener
-                    self.is_stopping = false;
-                    self.stop_requested_time = None;
-                    self.stop_and_transcribe();
-                }
-            } else if is_recording {
-                let btn = egui::Button::new(
-                    RichText::new(format!("{}  Detener y transcribir", ICON_STOP))
-                        .size(20.0)
-                        .color(Color32::WHITE),
-                )
-                .fill(ACCENT_RED)
-                .stroke(Stroke::new(2.0, ACCENT_RED_HOVER))
-                .rounding(10.0);
-
-                if ui.add_sized(egui::vec2(320.0, 64.0), btn).clicked() {
-                    // Guardar duración actual
-                    self.last_recording_duration = self
-                        .recording_start
-                        .map(|s| s.elapsed().as_secs_f64())
-                        .unwrap_or(0.0);
-                    // Iniciar delay de 3 segundos
-                    self.is_stopping = true;
-                    self.stop_requested_time = Some(std::time::Instant::now());
-                }
-            } else {
-                let btn = egui::Button::new(
-                    RichText::new(format!("{}  Iniciar grabación", ICON_RECORD))
-                        .size(20.0)
-                        .color(Color32::WHITE),
-                )
-                .fill(ACCENT_GREEN)
-                .stroke(Stroke::new(2.0, ACCENT_GREEN_HOVER))
-                .rounding(10.0);
-
-                if ui.add_sized(egui::vec2(320.0, 64.0), btn).clicked() {
-                    self.recording_start = Some(std::time::Instant::now());
-                    self.start_recording();
-                }
-            }
-        });
-
         ui.add_space(16.0);
 
-        // ── Waveform/Spectrum during recording ────────────────────────────────
+        // ── Main action button card ───────────────────────────────────────────
+        let card_frame = egui::Frame::group(ui.style())
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(24.0, 20.0));
+
+        card_frame.show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                // ── Big action button ────────────────────────────────────────
+                if is_busy {
+                    let (label, pct) = if is_transcribing {
+                        let p = if transcribe_pct >= 0 {
+                            transcribe_pct
+                        } else {
+                            0
+                        };
+                        (format!("...  Transcribiendo...  {}%", p), p)
+                    } else {
+                        let p = if ollama_pct >= 0 { ollama_pct } else { 0 };
+                        (
+                            format!("{}  Mejorando con Ollama...  {}%", ICON_MAGIC, p),
+                            p,
+                        )
+                    };
+                    ui.add_enabled_ui(false, |ui| {
+                        ui.add_sized(
+                            egui::vec2(320.0, 56.0),
+                            egui::Button::new(RichText::new(&label).size(18.0).color(TEXT_DIM))
+                                .fill(BG_PANEL),
+                        );
+                    });
+                    // Progress bar
+                    ui.add_space(12.0);
+                    let bar_width = 300.0_f32;
+                    let bar_height = 8.0_f32;
+                    let (bar_rect, _) =
+                        ui.allocate_exact_size(egui::vec2(bar_width, bar_height), Sense::hover());
+                    ui.painter().rect_filled(bar_rect, 4.0, BG_PANEL);
+                    let fill_w = bar_rect.width() * (pct as f32 / 100.0).clamp(0.0, 1.0);
+                    if fill_w > 0.0 {
+                        let fill_rect =
+                            Rect::from_min_size(bar_rect.min, egui::vec2(fill_w, bar_height));
+                        let bar_color = if is_transcribing {
+                            ACCENT_BLUE
+                        } else {
+                            ACCENT_PURPLE
+                        };
+                        ui.painter().rect_filled(fill_rect, 4.0, bar_color);
+                    }
+                } else if self.is_stopping {
+                    let elapsed = self
+                        .stop_requested_time
+                        .map(|t| t.elapsed().as_secs())
+                        .unwrap_or(0);
+                    let btn = egui::Button::new(
+                        RichText::new(format!("⏳  Deteniendo... ({}s)", 3 - elapsed.min(3)))
+                            .size(20.0)
+                            .color(Color32::WHITE),
+                    )
+                    .fill(Color32::from_rgb(150, 60, 60))
+                    .stroke(Stroke::new(2.0, ACCENT_RED_HOVER))
+                    .rounding(10.0);
+
+                    ui.add_sized(egui::vec2(320.0, 56.0), btn);
+
+                    if self
+                        .stop_requested_time
+                        .map(|t| t.elapsed().as_secs() >= 3)
+                        .unwrap_or(true)
+                    {
+                        self.is_stopping = false;
+                        self.stop_requested_time = None;
+                        self.stop_and_transcribe();
+                    }
+                } else if is_recording {
+                    let btn = egui::Button::new(
+                        RichText::new(format!("{}  Detener y transcribir", ICON_STOP))
+                            .size(20.0)
+                            .color(Color32::WHITE),
+                    )
+                    .fill(ACCENT_RED)
+                    .stroke(Stroke::new(2.0, ACCENT_RED_HOVER))
+                    .rounding(10.0);
+
+                    if ui.add_sized(egui::vec2(320.0, 56.0), btn).clicked() {
+                        self.last_recording_duration = self
+                            .recording_start
+                            .map(|s| s.elapsed().as_secs_f64())
+                            .unwrap_or(0.0);
+                        self.is_stopping = true;
+                        self.stop_requested_time = Some(std::time::Instant::now());
+                    }
+                } else {
+                    let btn = egui::Button::new(
+                        RichText::new(format!("{}  Iniciar grabación", ICON_RECORD))
+                            .size(20.0)
+                            .color(Color32::WHITE),
+                    )
+                    .fill(ACCENT_GREEN)
+                    .stroke(Stroke::new(2.0, ACCENT_GREEN_HOVER))
+                    .rounding(10.0);
+
+                    if ui.add_sized(egui::vec2(320.0, 56.0), btn).clicked() {
+                        self.recording_start = Some(std::time::Instant::now());
+                        self.start_recording();
+                    }
+                }
+
+                ui.add_space(12.0);
+
+                // ── Status bar ──────────────────────────────────────────────────
+                if is_recording {
+                    let elapsed = self
+                        .recording_start
+                        .map(|s| s.elapsed().as_secs_f32())
+                        .unwrap_or(0.0);
+                    let mins = (elapsed / 60.0) as u32;
+                    let secs = (elapsed % 60.0) as u32;
+
+                    ui.horizontal(|ui| {
+                        let t = ui.input(|i| i.time);
+                        let blink = ((t * 2.5).sin() * 0.5 + 0.5) as f32;
+                        let dot = Color32::from_rgba_premultiplied(
+                            230,
+                            (40.0 + 200.0 * blink) as u8,
+                            40,
+                            255,
+                        );
+                        ui.label(
+                            RichText::new(format!("{} GRABANDO", ICON_RECORD))
+                                .size(13.0)
+                                .color(dot)
+                                .strong(),
+                        );
+                        ui.add_space(16.0);
+                        ui.label(
+                            RichText::new(format!("{:02}:{:02}", mins, secs))
+                                .size(16.0)
+                                .color(TEXT_PRIMARY)
+                                .strong(),
+                        );
+                        ui.add_space(16.0);
+                        let highlight_btn = egui::Button::new(
+                            RichText::new(format!("{} Highlight", ICON_TAG))
+                                .size(13.0)
+                                .color(ACCENT_PURPLE),
+                        )
+                        .fill(Color32::from_rgb(45, 35, 65))
+                        .stroke(Stroke::new(1.5, ACCENT_PURPLE))
+                        .rounding(6.0);
+
+                        if ui
+                            .add(highlight_btn)
+                            .on_hover_text("Ctrl+Shift+H")
+                            .clicked()
+                        {
+                            self.add_highlight_during_recording(None);
+                        }
+                    });
+                } else if !is_busy {
+                    ui.label(
+                        RichText::new("Presiona Iniciar grabación para comenzar")
+                            .size(13.0)
+                            .color(TEXT_MUTED),
+                    );
+                }
+            });
+        });
+
+        // ── Waveform during recording ───────────────────────────────────────
         if is_recording {
-            let frame = egui::Frame::none()
-                .fill(BG_PANEL)
+            ui.add_space(12.0);
+            let frame = egui::Frame::group(ui.style())
+                .fill(BG_CARD)
                 .stroke(Stroke::new(1.0, BORDER))
                 .rounding(8.0)
                 .inner_margin(egui::Margin::symmetric(16.0, 12.0));
@@ -671,24 +746,22 @@ impl App {
             frame.show(ui, |ui| {
                 ui.label(
                     RichText::new(format!("{} Audio en tiempo real", ICON_AUDIO))
-                        .size(14.0)
+                        .size(13.0)
                         .color(TEXT_DIM),
                 );
                 ui.add_space(8.0);
 
                 let samples = self.waveform_buffer.lock().unwrap();
-
                 let (rect, _resp) =
-                    ui.allocate_exact_size(egui::vec2(ui.available_width(), 100.0), Sense::hover());
+                    ui.allocate_exact_size(egui::vec2(ui.available_width(), 80.0), Sense::hover());
                 let painter = ui.painter();
                 let center_y = rect.center().y;
-                let max_bar_height = 45.0;
+                let max_bar_height = 35.0;
                 let num_bars = 48;
                 let bar_width = (rect.width() - 20.0) / num_bars as f32;
-                let gap = bar_width * 0.25; // 25% gap between bars
+                let gap = bar_width * 0.25;
                 let actual_bar_width = bar_width - gap;
 
-                // Draw subtle center line
                 painter.line_segment(
                     [
                         Pos2::new(rect.min.x + 5.0, center_y),
@@ -697,18 +770,13 @@ impl App {
                     Stroke::new(1.0, Color32::from_rgb(40, 50, 65)),
                 );
 
-                // Calculate target values for each bar
                 let mut target_values = vec![0.0f32; num_bars];
 
                 if samples.len() >= 32 {
-                    // Calculate RMS for each frequency band
                     let samples_per_band = samples.len() / num_bars;
-
                     for bar_idx in 0..num_bars {
                         let start_sample = bar_idx * samples_per_band;
                         let end_sample = ((bar_idx + 1) * samples_per_band).min(samples.len());
-
-                        // Calculate RMS for this band
                         let mut sum_squares: f32 = 0.0;
                         let mut count = 0;
                         for i in start_sample..end_sample {
@@ -722,12 +790,9 @@ impl App {
                         } else {
                             0.0
                         };
-
-                        // Faster response with higher gain and less compression
                         target_values[bar_idx] = (rms * 12.0).min(1.0).powf(0.6);
                     }
                 } else {
-                    // Idle animation - subtle wave
                     let t = ui.input(|i| i.time) as f32 * 3.0;
                     for bar_idx in 0..num_bars {
                         let x = bar_idx as f32 / num_bars as f32;
@@ -735,18 +800,15 @@ impl App {
                     }
                 }
 
-                // Smooth animation using lerp for fluid motion
-                let smoothing_factor = 0.35; // Higher = faster response (0.0-1.0)
-                let peak_decay = 0.92; // How fast peaks fall (0.0-1.0)
+                let smoothing_factor = 0.35;
+                let peak_decay = 0.92;
 
                 for bar_idx in 0..num_bars {
-                    // Smoothly interpolate current value to target
                     let current = self.spectrum_bars[bar_idx];
                     let target = target_values[bar_idx];
                     let smoothed = current + (target - current) * smoothing_factor;
                     self.spectrum_bars[bar_idx] = smoothed;
 
-                    // Update peak hold
                     if smoothed > self.spectrum_peak[bar_idx] {
                         self.spectrum_peak[bar_idx] = smoothed;
                     } else {
@@ -755,14 +817,10 @@ impl App {
 
                     let bar_height = smoothed * max_bar_height;
                     let peak_height = self.spectrum_peak[bar_idx] * max_bar_height;
-
-                    // Calculate x position
                     let x = rect.min.x + 10.0 + bar_idx as f32 * bar_width;
 
-                    // Get color from gradient based on amplitude (changes with volume)
                     let color_t = bar_idx as f32 / num_bars as f32;
                     let base_color = interpolate_spectrum_color(color_t);
-                    // Brightness varies with amplitude
                     let brightness = 0.5 + smoothed * 0.5;
                     let color = Color32::from_rgb(
                         (base_color.r() as f32 * brightness) as u8,
@@ -770,23 +828,19 @@ impl App {
                         (base_color.b() as f32 * brightness) as u8,
                     );
 
-                    // Draw the bar (both up and down from center)
                     if bar_height > 1.0 {
-                        // Upper bar with gradient effect
                         let upper_rect = Rect::from_min_max(
                             Pos2::new(x, center_y - bar_height),
                             Pos2::new(x + actual_bar_width, center_y - 1.0),
                         );
                         painter.rect_filled(upper_rect, 2.0, color);
 
-                        // Lower bar (mirror)
                         let lower_rect = Rect::from_min_max(
                             Pos2::new(x, center_y + 1.0),
                             Pos2::new(x + actual_bar_width, center_y + bar_height),
                         );
                         painter.rect_filled(lower_rect, 2.0, color);
 
-                        // Draw peak indicator
                         if peak_height > bar_height + 3.0 {
                             let peak_y = center_y - peak_height;
                             let peak_rect = Rect::from_min_max(
@@ -796,7 +850,6 @@ impl App {
                             painter.rect_filled(peak_rect, 1.0, base_color);
                         }
                     } else {
-                        // Just a small indicator for low amplitude
                         let dot_rect = Rect::from_center_size(
                             Pos2::new(x + actual_bar_width / 2.0, center_y),
                             egui::vec2(actual_bar_width, 2.0),
@@ -807,119 +860,53 @@ impl App {
             });
         }
 
-        ui.add_space(12.0);
+        ui.add_space(16.0);
 
-        // ── Recording status ─────────────────────────────────────────────────
-        let status_height = 56.0;
-        let desired_size = egui::vec2(ui.available_width(), status_height);
-        let (response, painter) = ui.allocate_painter(desired_size, Sense::hover());
-        let rect = response.rect;
+        // ── Transcript section ───────────────────────────────────────────────
+        ui.label(
+            RichText::new("Transcripción")
+                .size(13.0)
+                .color(TEXT_DIM)
+                .strong(),
+        );
+        ui.add_space(6.0);
 
-        painter.rect_filled(rect, 8.0, BG_PANEL);
-
-        if is_recording {
-            let t = ui.input(|i| i.time);
-            let blink = ((t * 2.5).sin() * 0.5 + 0.5) as f32;
-            let dot = Color32::from_rgba_premultiplied(230, (40.0 + 200.0 * blink) as u8, 40, 255);
-            painter.circle_filled(Pos2::new(rect.left() + 20.0, rect.center().y), 8.0, dot);
-            painter.text(
-                Pos2::new(rect.left() + 36.0, rect.center().y - 8.0),
-                egui::Align2::LEFT_TOP,
-                "GRABANDO",
-                FontId::monospace(14.0),
-                dot,
-            );
-
-            let elapsed = self
-                .recording_start
-                .map(|s| s.elapsed().as_secs_f32())
-                .unwrap_or(0.0);
-            let mins = (elapsed / 60.0) as u32;
-            let secs = (elapsed % 60.0) as u32;
-            painter.text(
-                Pos2::new(rect.right() - 16.0, rect.center().y - 8.0),
-                egui::Align2::RIGHT_TOP,
-                format!("{:02}:{:02}", mins, secs),
-                FontId::monospace(18.0),
-                TEXT_PRIMARY,
-            );
-
-            // Highlight button during recording
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                ui.add_space(8.0);
-                let highlight_btn = egui::Button::new(
-                    RichText::new("🏷️  Marcar highlight")
-                        .size(14.0)
-                        .color(ACCENT_PURPLE),
-                )
-                .fill(Color32::from_rgb(45, 35, 65))
-                .stroke(Stroke::new(1.5, ACCENT_PURPLE))
-                .rounding(8.0);
-
-                if ui
-                    .add(highlight_btn)
-                    .on_hover_text("Ctrl+Shift+H")
-                    .clicked()
-                {
-                    self.add_highlight_during_recording(None);
-                }
-            });
-        } else if !is_busy {
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "Presiona Iniciar grabación para comenzar",
-                FontId::proportional(14.0),
-                TEXT_MUTED,
-            );
-        }
-
-        ui.add_space(12.0);
-        ui.separator();
-        ui.add_space(10.0);
-
-        // ── Transcript area + Recordings history ─────────────────────────────
-        // Split available height: transcript 40%, recordings list 60%
-        let avail = ui.available_height();
-        let transcript_h = if self.show_recordings {
-            avail * 0.35
-        } else {
-            avail - 4.0
-        };
-        let recordings_h = avail - transcript_h - 32.0;
-
-        ui.label(RichText::new("Transcripción").size(13.0).color(TEXT_DIM));
-        ui.add_space(4.0);
-
-        egui::ScrollArea::vertical()
-            .id_source("transcript_scroll")
-            .max_height(transcript_h)
+        egui::Frame::group(ui.style())
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(8.0)
+            .inner_margin(egui::Margin::symmetric(12.0, 10.0))
             .show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::multiline(&mut self.transcript_edit)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(6)
-                        .font(FontId::proportional(16.0))
-                        .text_color(TEXT_PRIMARY)
-                        .interactive(true),
-                );
+                egui::ScrollArea::vertical()
+                    .id_source("transcript_scroll")
+                    .max_height(150.0)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.transcript_edit)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(5)
+                                .font(FontId::proportional(15.0))
+                                .text_color(TEXT_PRIMARY)
+                                .interactive(true),
+                        );
+                    });
             });
 
-        ui.add_space(8.0);
+        ui.add_space(16.0);
 
-        // ── Recordings history header ─────────────────────────────────────────
+        // ── Recordings history ───────────────────────────────────────────────
+        let arrow = if self.show_recordings {
+            ICON_EXPAND
+        } else {
+            ICON_COLLAPSE
+        };
+        let count = self.recordings.len();
+        let header = format!("{} Grabaciones recientes  ({})", arrow, count);
+
         ui.horizontal(|ui| {
-            let arrow = if self.show_recordings {
-                ICON_EXPAND
-            } else {
-                ICON_COLLAPSE
-            };
-            let count = self.recordings.len();
-            let header = format!("{} Grabaciones recientes  ({})", arrow, count);
             if ui
                 .add(
-                    egui::Button::new(RichText::new(&header).size(13.0).color(TEXT_DIM))
+                    egui::Button::new(RichText::new(&header).size(13.0).color(TEXT_DIM).strong())
                         .fill(Color32::TRANSPARENT)
                         .stroke(Stroke::NONE),
                 )
@@ -930,14 +917,13 @@ impl App {
         });
 
         if self.show_recordings {
-            ui.add_space(4.0);
+            ui.add_space(6.0);
             egui::ScrollArea::vertical()
                 .id_source("recordings_scroll")
-                .max_height(recordings_h)
                 .show(ui, |ui| {
                     if self.recordings.is_empty() {
-                        ui.add_space(8.0);
                         ui.vertical_centered(|ui| {
+                            ui.add_space(12.0);
                             ui.label(
                                 RichText::new("No hay grabaciones aún")
                                     .size(13.0)
@@ -947,117 +933,153 @@ impl App {
                     } else {
                         let expanded_id = self.expanded_recording_id;
                         let recordings = self.recordings.clone();
+
                         for entry in recordings {
                             let is_expanded = expanded_id == Some(entry.id);
                             let recording_id = entry.id;
-                            let expand_btn = egui::Button::new(
-                                RichText::new(if is_expanded {
-                                    ICON_EXPAND
-                                } else {
-                                    ICON_COLLAPSE
-                                })
-                                .size(14.0)
-                                .color(TEXT_DIM),
-                            )
-                            .fill(Color32::TRANSPARENT)
-                            .stroke(Stroke::NONE);
 
-                            ui.horizontal(|ui| {
-                                if ui.add(expand_btn).clicked() {
-                                    if self.expanded_recording_id == Some(recording_id) {
-                                        self.expanded_recording_id = None;
-                                    } else {
-                                        self.expanded_recording_id = Some(recording_id);
-                                    }
-                                }
+                            // Recording row card
+                            egui::Frame::group(ui.style())
+                                .fill(BG_CARD)
+                                .stroke(Stroke::new(1.0, BORDER))
+                                .rounding(8.0)
+                                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        // Expand button
+                                        let expand_btn = egui::Button::new(
+                                            RichText::new(if is_expanded {
+                                                ICON_EXPAND
+                                            } else {
+                                                ICON_COLLAPSE
+                                            })
+                                            .size(14.0)
+                                            .color(TEXT_DIM),
+                                        )
+                                        .fill(Color32::TRANSPARENT)
+                                        .stroke(Stroke::NONE)
+                                        .min_size(egui::vec2(24.0, 24.0));
 
-                                ui.add_space(4.0);
-
-                                let title = entry.title.as_deref().unwrap_or(&entry.filename);
-                                let truncated = if title.len() > 40 {
-                                    format!("{}...", &title[..37])
-                                } else {
-                                    title.to_string()
-                                };
-
-                                ui.label(
-                                    RichText::new(truncated)
-                                        .size(13.0)
-                                        .color(TEXT_PRIMARY)
-                                        .strong(),
-                                );
-
-                                ui.add_space(8.0);
-                                ui.label(
-                                    RichText::new(format!("⏱ {}", entry.duration_display()))
-                                        .size(11.0)
-                                        .color(TEXT_DIM),
-                                );
-
-                                // Status badges
-                                ui.add_space(8.0);
-                                if entry.has_transcript {
-                                    ui.label(
-                                        RichText::new(ICON_FILE).size(11.0).color(ACCENT_GREEN),
-                                    )
-                                    .on_hover_text("Tiene transcripción");
-                                }
-                                if entry.has_summaries {
-                                    ui.add_space(4.0);
-                                    ui.label(
-                                        RichText::new(ICON_MAGIC).size(11.0).color(ACCENT_PURPLE),
-                                    )
-                                    .on_hover_text("Tiene resúmenes");
-                                }
-
-                                #[cfg(feature = "audio-playback")]
-                                {
-                                    ui.add_space(8.0);
-                                    let btn = egui::Button::new(
-                                        RichText::new(ICON_PLAY).size(12.0).color(ACCENT_GREEN),
-                                    )
-                                    .fill(Color32::TRANSPARENT)
-                                    .stroke(Stroke::new(1.0, ACCENT_GREEN))
-                                    .rounding(4.0);
-
-                                    if ui.add(btn).clicked() {
-                                        let wav_path = entry.filepath.replace(".txt", ".wav");
-                                        if std::path::Path::new(&wav_path).exists() {
-                                            if let Some(ref mut player) = self.audio_player {
-                                                let _ = player.play(&wav_path);
-                                                self.current_playing_id = Some(entry.id);
-                                            }
+                                        if ui.add(expand_btn).clicked() {
+                                            self.expanded_recording_id = if is_expanded {
+                                                None
+                                            } else {
+                                                Some(recording_id)
+                                            };
                                         }
+
+                                        ui.add_space(4.0);
+
+                                        // Title
+                                        let title =
+                                            entry.title.as_deref().unwrap_or(&entry.filename);
+                                        let truncated = if title.len() > 40 {
+                                            format!("{}...", &title[..37])
+                                        } else {
+                                            title.to_string()
+                                        };
+
+                                        ui.label(
+                                            RichText::new(truncated)
+                                                .size(13.0)
+                                                .color(TEXT_PRIMARY)
+                                                .strong(),
+                                        );
+
+                                        ui.add_space(8.0);
+
+                                        // Duration
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "⏱ {}",
+                                                entry.duration_display()
+                                            ))
+                                            .size(11.0)
+                                            .color(TEXT_DIM),
+                                        );
+
+                                        // Status badges
+                                        ui.add_space(8.0);
+                                        if entry.has_transcript {
+                                            ui.label(
+                                                RichText::new(ICON_FILE)
+                                                    .size(11.0)
+                                                    .color(ACCENT_GREEN),
+                                            )
+                                            .on_hover_text("Tiene transcripción");
+                                        }
+                                        if entry.has_summaries {
+                                            ui.add_space(4.0);
+                                            ui.label(
+                                                RichText::new(ICON_MAGIC)
+                                                    .size(11.0)
+                                                    .color(ACCENT_PURPLE),
+                                            )
+                                            .on_hover_text("Tiene resúmenes");
+                                        }
+
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                // Delete button (24x24 with red border)
+                                                #[cfg(feature = "audio-playback")]
+                                                {
+                                                    let play_btn = egui::Button::new(
+                                                        RichText::new(ICON_PLAY)
+                                                            .size(12.0)
+                                                            .color(ACCENT_GREEN),
+                                                    )
+                                                    .fill(Color32::TRANSPARENT)
+                                                    .stroke(Stroke::new(1.0, ACCENT_GREEN))
+                                                    .rounding(4.0)
+                                                    .min_size(egui::vec2(24.0, 24.0));
+
+                                                    if ui.add(play_btn).clicked() {
+                                                        let wav_path =
+                                                            entry.filepath.replace(".txt", ".wav");
+                                                        if std::path::Path::new(&wav_path).exists()
+                                                        {
+                                                            if let Some(ref mut player) =
+                                                                self.audio_player
+                                                            {
+                                                                let _ = player.play(&wav_path);
+                                                                self.current_playing_id =
+                                                                    Some(entry.id);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                let delete_btn = egui::Button::new(
+                                                    RichText::new(ICON_DELETE)
+                                                        .size(12.0)
+                                                        .color(ACCENT_RED),
+                                                )
+                                                .fill(Color32::TRANSPARENT)
+                                                .stroke(Stroke::new(1.0, ACCENT_RED))
+                                                .rounding(4.0)
+                                                .min_size(egui::vec2(24.0, 24.0));
+
+                                                if ui
+                                                    .add(delete_btn)
+                                                    .on_hover_text("Eliminar grabación")
+                                                    .clicked()
+                                                {
+                                                    self.recording_to_delete = Some(entry.id);
+                                                    self.show_delete_confirmation = true;
+                                                }
+                                            },
+                                        );
+                                    });
+
+                                    // Expanded content
+                                    if is_expanded {
+                                        ui.add_space(8.0);
+                                        self.show_recording_row_expanded(ui, &entry);
                                     }
-                                }
+                                });
 
-                                // Delete button
-                                ui.add_space(4.0);
-                                let delete_btn = egui::Button::new(
-                                    RichText::new("×").size(14.0).color(ACCENT_RED),
-                                )
-                                .fill(Color32::TRANSPARENT)
-                                .stroke(Stroke::new(1.0, ACCENT_RED))
-                                .rounding(4.0)
-                                .min_size(egui::vec2(24.0, 24.0));
-
-                                if ui
-                                    .add(delete_btn)
-                                    .on_hover_text("Eliminar grabación")
-                                    .clicked()
-                                {
-                                    self.recording_to_delete = Some(entry.id);
-                                    self.show_delete_confirmation = true;
-                                }
-                            });
-
-                            // Show expanded content if expanded
-                            if is_expanded {
-                                ui.add_space(8.0);
-                                self.show_recording_row_expanded(ui, &entry);
-                            }
-
-                            ui.add_space(4.0);
+                            ui.add_space(6.0);
                         }
                     }
                 });
@@ -2343,553 +2365,777 @@ impl App {
 
     // ── Settings tab ─────────────────────────────────────────────────────────
 
-    fn show_settings_tab(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical()
-            .id_source("settings_scroll")
-            .show(ui, |ui| {
-                ui.add_space(24.0);
+    fn render_sidebar(&mut self, ui: &mut egui::Ui) {
+        // Sidebar styling
+        ui.set_width(160.0);
 
-                // Panel frame with better spacing
-                let frame = egui::Frame::none().inner_margin(egui::Margin::symmetric(24.0, 16.0));
+        // Title
+        ui.add_space(12.0);
+        ui.label(
+            RichText::new("Configuración")
+                .size(16.0)
+                .strong()
+                .color(TEXT_PRIMARY),
+        );
+        ui.add_space(16.0);
 
-                frame.show(ui, |ui| {
-                    // ── Section: Modelo Whisper ──────────────────────────────────
-                    section_header(ui, "🎙  Modelo de transcripción (Whisper)");
-                    ui.add_space(12.0);
+        // Navigation items
+        let sections = [
+            (SettingsSection::Audio, "Audio", ICON_MIC),
+            (
+                SettingsSection::Transcription,
+                "Transcripción",
+                ICON_TRANSCRIPT,
+            ),
+            (SettingsSection::Ollama, "IA (Ollama)", ICON_MAGIC),
+            (SettingsSection::Summaries, "Resúmenes", ICON_MAGIC),
+            (SettingsSection::Prompts, "Prompts", ICON_FILE),
+            (SettingsSection::System, "Sistema", ICON_SETTINGS),
+        ];
 
-                    if self.available_models.is_empty() {
-                        ui.label(
-                            RichText::new("No se encontraron modelos en models/")
-                                .size(14.0)
-                                .color(ACCENT_RED),
-                        );
-                    } else {
-                        let current_name = self
-                            .available_models
-                            .get(self.selected_model_index)
-                            .map(|(n, _)| n.as_str())
-                            .unwrap_or("—");
+        for (section, label, icon) in sections {
+            let is_selected = self.settings_section == section;
+            let (bg, fg) = if is_selected {
+                (BG_CARD, ACCENT_BLUE)
+            } else {
+                (Color32::TRANSPARENT, TEXT_DIM)
+            };
 
-                        egui::ComboBox::from_id_source("whisper_model_combo")
-                            .selected_text(RichText::new(current_name).size(15.0))
-                            .width(ui.available_width())
-                            .show_ui(ui, |ui| {
-                                for (i, (name, _)) in self.available_models.iter().enumerate() {
-                                    let selected = i == self.selected_model_index;
-                                    if ui
-                                        .selectable_label(selected, RichText::new(name).size(15.0))
-                                        .clicked()
-                                        && i != self.selected_model_index
-                                    {
-                                        self.selected_model_index = i;
-                                        self.model_changed = true;
-                                    }
-                                }
-                            });
-                    }
+            let btn = egui::Button::new(
+                RichText::new(format!("{} {}", icon, label))
+                    .size(13.0)
+                    .color(fg),
+            )
+            .fill(bg)
+            .stroke(if is_selected {
+                Stroke::new(1.0, ACCENT_BLUE)
+            } else {
+                Stroke::new(0.0, Color32::TRANSPARENT)
+            })
+            .rounding(6.0)
+            .min_size(egui::vec2(140.0, 36.0));
 
-                    if self.model_changed {
-                        ui.add_space(6.0);
-                        ui.label(
-                            RichText::new("⚠ El modelo nuevo se aplica al reiniciar la app.")
-                                .size(12.0)
-                                .color(Color32::from_rgb(255, 200, 60)),
-                        );
-                    }
+            if ui.add(btn).clicked() {
+                self.settings_section = section;
+            }
+            ui.add_space(4.0);
+        }
+    }
 
-                    ui.add_space(24.0);
-                    ui.separator();
-                    ui.add_space(16.0);
+    fn render_audio_section(&mut self, ui: &mut egui::Ui) {
+        let frame = egui::Frame::group(ui.style())
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(18.0, 16.0));
 
-                    // ── Section: Dispositivo de entrada ──────────────────────────
-                    section_header(ui, "🎤  Dispositivo de entrada (Micrófono)");
-                    ui.add_space(12.0);
+        frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{} Audio", ICON_MIC))
+                        .size(16.0)
+                        .strong()
+                        .color(TEXT_PRIMARY),
+                );
+                ui.add_space(10.0);
+                if self.input_devices.is_empty() {
+                    status_badge(ui, "Sin dispositivos", Color32::from_rgb(245, 178, 80));
+                } else {
+                    status_badge(ui, "Capturando correctamente", ACCENT_GREEN);
+                }
+            });
 
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                RichText::new("↻  Actualizar dispositivos").size(13.0),
-                            )
-                            .fill(Color32::from_rgb(35, 45, 60))
-                            .stroke(Stroke::new(1.0, BORDER))
-                            .rounding(6.0),
-                        )
-                        .clicked()
-                    {
-                        self.refresh_audio_devices();
-                    }
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(
+                    "Selecciona la fuente principal para grabar y el fallback de sistema.",
+                )
+                .size(11.0)
+                .color(TEXT_MUTED),
+            );
 
-                    ui.add_space(10.0);
-
-                    if self.input_devices.is_empty() {
-                        ui.label(
-                            RichText::new("No se encontraron dispositivos de entrada")
-                                .size(14.0)
-                                .color(TEXT_DIM),
-                        );
-                    } else {
-                        let current_input = self
-                            .input_devices
-                            .get(self.selected_input_index)
-                            .map(|(n, _)| n.as_str())
-                            .unwrap_or("—");
-
-                        egui::ComboBox::from_id_source("input_device_combo")
-                            .selected_text(RichText::new(current_input).size(15.0))
-                            .width(ui.available_width())
-                            .show_ui(ui, |ui| {
-                                for (i, (name, _)) in self.input_devices.iter().enumerate() {
-                                    let selected = i == self.selected_input_index;
-                                    if ui
-                                        .selectable_label(selected, RichText::new(name).size(15.0))
-                                        .clicked()
-                                    {
-                                        self.selected_input_index = i;
-                                    }
-                                }
-                            });
-                    }
-
-                    ui.add_space(24.0);
-                    ui.separator();
-                    ui.add_space(16.0);
-
-                    // ── Section: Dispositivo de salida ────────────────────────────
-                    section_header(ui, "🔊  Dispositivo de salida (Audio del sistema)");
-                    ui.add_space(12.0);
-
-                    if self.output_devices.is_empty() {
-                        ui.label(
-                            RichText::new("No se encontraron dispositivos de salida")
-                                .size(14.0)
-                                .color(TEXT_DIM),
-                        );
-                    } else {
-                        let current_output = self
-                            .output_devices
-                            .get(self.selected_output_index)
-                            .map(|(n, _)| n.as_str())
-                            .unwrap_or("—");
-
-                        egui::ComboBox::from_id_source("output_device_combo")
-                            .selected_text(RichText::new(current_output).size(15.0))
-                            .width(ui.available_width())
-                            .show_ui(ui, |ui| {
-                                for (i, (name, _)) in self.output_devices.iter().enumerate() {
-                                    let selected = i == self.selected_output_index;
-                                    if ui
-                                        .selectable_label(selected, RichText::new(name).size(15.0))
-                                        .clicked()
-                                    {
-                                        self.selected_output_index = i;
-                                    }
-                                }
-                            });
-                    }
-
-                    ui.label(
-                    RichText::new(
-                        "  Prioriza el micrófono seleccionado; si no está disponible usa la salida del sistema.",
+            ui.add_space(14.0);
+            if ui
+                .add(
+                    egui::Button::new(
+                        RichText::new(format!(
+                            "{} Actualizar dispositivos",
+                            icons::ARROW_CLOCKWISE
+                        ))
+                        .size(13.0),
                     )
-                    .size(12.0)
+                    .fill(Color32::from_rgb(35, 45, 60))
+                    .stroke(Stroke::new(1.0, BORDER))
+                    .rounding(7.0),
+                )
+                .clicked()
+            {
+                self.refresh_audio_devices();
+            }
+
+            ui.add_space(14.0);
+            ui.separator();
+            ui.add_space(14.0);
+
+            ui.label(RichText::new("Micrófono").size(12.0).color(TEXT_DIM));
+            ui.add_space(5.0);
+            if self.input_devices.is_empty() {
+                ui.label(
+                    RichText::new("No se encontraron")
+                        .size(13.0)
+                        .color(TEXT_DIM),
+                );
+            } else {
+                let current_input = self
+                    .input_devices
+                    .get(self.selected_input_index)
+                    .map(|(n, _)| truncate_ui_text(n, 48))
+                    .unwrap_or_else(|| "—".to_string());
+                let field_width = settings_field_width(ui);
+                let combo_resp = egui::ComboBox::from_id_source("input_device_settings")
+                    .selected_text(RichText::new(current_input).size(13.0))
+                    .width(field_width)
+                    .show_ui(ui, |ui| {
+                        for (i, (name, _)) in self.input_devices.iter().enumerate() {
+                            let selected = i == self.selected_input_index;
+                            let response = ui.selectable_label(
+                                selected,
+                                RichText::new(truncate_ui_text(name, 70)).size(13.0),
+                            );
+                            let response = response.on_hover_text(name);
+                            if response.clicked() {
+                                self.selected_input_index = i;
+                            }
+                        }
+                    });
+                combo_resp
+                    .response
+                    .on_hover_text("Dispositivo de captura principal");
+            }
+
+            ui.add_space(12.0);
+            ui.label(RichText::new("Salida de audio").size(12.0).color(TEXT_DIM));
+            ui.add_space(5.0);
+            if self.output_devices.is_empty() {
+                ui.label(
+                    RichText::new("No se encontraron")
+                        .size(13.0)
+                        .color(TEXT_DIM),
+                );
+            } else {
+                let current_output = self
+                    .output_devices
+                    .get(self.selected_output_index)
+                    .map(|(n, _)| truncate_ui_text(n, 48))
+                    .unwrap_or_else(|| "—".to_string());
+                let field_width = settings_field_width(ui);
+                egui::ComboBox::from_id_source("output_device_settings")
+                    .selected_text(RichText::new(current_output).size(13.0))
+                    .width(field_width)
+                    .show_ui(ui, |ui| {
+                        for (i, (name, _)) in self.output_devices.iter().enumerate() {
+                            let selected = i == self.selected_output_index;
+                            let response = ui.selectable_label(
+                                selected,
+                                RichText::new(truncate_ui_text(name, 70)).size(13.0),
+                            );
+                            let response = response.on_hover_text(name);
+                            if response.clicked() {
+                                self.selected_output_index = i;
+                            }
+                        }
+                    });
+            }
+
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new(
+                    "Se prioriza el micrófono seleccionado; si falla, se usa la salida de sistema.",
+                )
+                .size(11.0)
+                .color(TEXT_MUTED),
+            );
+        });
+    }
+
+    fn render_transcription_section(&mut self, ui: &mut egui::Ui) {
+        let frame = egui::Frame::group(ui.style())
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(18.0, 16.0));
+
+        frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{} Transcripción", ICON_TRANSCRIPT))
+                        .size(16.0)
+                        .strong()
+                        .color(TEXT_PRIMARY),
+                );
+                ui.add_space(10.0);
+                status_badge(ui, "Activo", ACCENT_GREEN);
+            });
+
+            ui.add_space(14.0);
+            ui.label(RichText::new("Modelo Whisper").size(12.0).color(TEXT_DIM));
+            ui.add_space(5.0);
+
+            if self.available_models.is_empty() {
+                ui.label(
+                    RichText::new("No se encontraron modelos en models/")
+                        .size(13.0)
+                        .color(ACCENT_RED),
+                );
+            } else {
+                let current_name = self
+                    .available_models
+                    .get(self.selected_model_index)
+                    .map(|(n, _)| truncate_ui_text(n, 48))
+                    .unwrap_or_else(|| "—".to_string());
+                let field_width = settings_field_width(ui);
+                egui::ComboBox::from_id_source("whisper_model_settings")
+                    .selected_text(RichText::new(current_name).size(13.0))
+                    .width(field_width)
+                    .show_ui(ui, |ui| {
+                        for (i, (name, _)) in self.available_models.iter().enumerate() {
+                            let selected = i == self.selected_model_index;
+                            let response = ui.selectable_label(
+                                selected,
+                                RichText::new(truncate_ui_text(name, 70)).size(13.0),
+                            );
+                            let response = response.on_hover_text(name);
+                            if response.clicked() && i != self.selected_model_index {
+                                self.selected_model_index = i;
+                                self.model_changed = true;
+                            }
+                        }
+                    });
+            }
+
+            if self.model_changed {
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new("⚠ El modelo nuevo se aplica al reiniciar la aplicación.")
+                        .size(11.0)
+                        .color(Color32::from_rgb(255, 200, 60)),
+                );
+            }
+
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("Calidad: Alta · Latencia: Media")
+                    .size(11.0)
+                    .color(TEXT_MUTED),
+            );
+        });
+    }
+
+    fn render_ollama_section(&mut self, ui: &mut egui::Ui) {
+        let frame = egui::Frame::group(ui.style())
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(18.0, 16.0));
+
+        frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{} IA (Ollama)", ICON_MAGIC))
+                        .size(16.0)
+                        .strong()
+                        .color(TEXT_PRIMARY),
+                );
+                ui.add_space(12.0);
+                let toggle_text = if self.ollama_enabled {
+                    RichText::new("Activado").size(12.0).color(ACCENT_GREEN)
+                } else {
+                    RichText::new("Desactivado").size(12.0).color(TEXT_DIM)
+                };
+                ui.checkbox(&mut self.ollama_enabled, toggle_text);
+            });
+
+            ui.add_space(10.0);
+            if !self.ollama_available {
+                status_badge(ui, "No disponible", Color32::from_rgb(245, 178, 80));
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new("Instala Ollama y ejecuta el servicio local para habilitar IA.")
+                        .size(11.0)
+                        .color(TEXT_DIM),
+                );
+                return;
+            }
+
+            status_badge(ui, "Disponible", ACCENT_GREEN);
+
+            if !self.ollama_enabled {
+                ui.add_space(8.0);
+                ui.label(
+                    RichText::new(
+                        "Activa la opción para seleccionar modelo y mejoras automáticas.",
+                    )
+                    .size(11.0)
                     .color(TEXT_MUTED),
                 );
+                return;
+            }
 
-                    ui.add_space(24.0);
-                    ui.separator();
-                    ui.add_space(16.0);
+            ui.add_space(14.0);
+            ui.label(RichText::new("Modelo").size(12.0).color(TEXT_DIM));
+            ui.add_space(5.0);
 
-                    // ── Section: Ollama ───────────────────────────────────────────
-                    section_header(ui, "✨  Mejora con Ollama");
-                    ui.add_space(12.0);
-
-                    if !self.ollama_available {
-                        status_badge(
-                            ui,
-                            "Ollama no detectado en localhost:11434",
-                            Color32::from_rgb(200, 60, 60),
-                        );
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(
-                                "Instala Ollama (ollama.com) y asegúrate de que esté corriendo.",
-                            )
-                            .size(12.0)
-                            .color(TEXT_DIM),
-                        );
-                    } else {
-                        status_badge(ui, "Ollama disponible", ACCENT_GREEN);
-                        ui.add_space(10.0);
-
-                        ui.horizontal(|ui| {
-                            let toggle_text = if self.ollama_enabled {
-                                RichText::new("Activado").size(15.0).color(ACCENT_GREEN)
-                            } else {
-                                RichText::new("Desactivado").size(15.0).color(TEXT_DIM)
-                            };
-                            ui.checkbox(&mut self.ollama_enabled, toggle_text);
-                        });
-
-                        if self.ollama_enabled {
-                            ui.add_space(10.0);
-                            ui.label(
-                                RichText::new("Modelo para mejorar transcripción")
-                                    .size(13.0)
-                                    .color(TEXT_DIM),
+            if self.ollama_models.is_empty() {
+                ui.label(
+                    RichText::new("No hay modelos instalados")
+                        .size(13.0)
+                        .color(ACCENT_RED),
+                );
+            } else {
+                let current_name = self
+                    .ollama_models
+                    .get(self.ollama_selected_index)
+                    .map(|name| truncate_ui_text(name, 48))
+                    .unwrap_or_else(|| "—".to_string());
+                let field_width = settings_field_width(ui);
+                egui::ComboBox::from_id_source("ollama_model_settings")
+                    .selected_text(RichText::new(current_name).size(13.0))
+                    .width(field_width)
+                    .show_ui(ui, |ui| {
+                        for (i, name) in self.ollama_models.iter().enumerate() {
+                            let selected = i == self.ollama_selected_index;
+                            let response = ui.selectable_label(
+                                selected,
+                                RichText::new(truncate_ui_text(name, 70)).size(13.0),
                             );
-                            ui.add_space(4.0);
-
-                            if self.ollama_models.is_empty() {
-                                ui.label(
-                                    RichText::new("No hay modelos instalados en Ollama")
-                                        .size(14.0)
-                                        .color(ACCENT_RED),
-                                );
-                            } else {
-                                let current_name = self
-                                    .ollama_models
-                                    .get(self.ollama_selected_index)
-                                    .cloned()
-                                    .unwrap_or_default();
-
-                                egui::ComboBox::from_id_source("ollama_model_combo")
-                                    .selected_text(RichText::new(&current_name).size(15.0))
-                                    .width(ui.available_width())
-                                    .show_ui(ui, |ui| {
-                                        for (i, name) in self.ollama_models.iter().enumerate() {
-                                            let selected = i == self.ollama_selected_index;
-                                            if ui
-                                                .selectable_label(
-                                                    selected,
-                                                    RichText::new(name).size(15.0),
-                                                )
-                                                .clicked()
-                                            {
-                                                self.ollama_selected_index = i;
-                                            }
-                                        }
-                                    });
-                            }
-
-                            ui.add_space(6.0);
-                            ui.label(
-                                RichText::new(
-                                    "Después de transcribir, Ollama corregirá ortografía,\n\
-                                 puntuación y errores de reconocimiento.",
-                                )
-                                .size(12.0)
-                                .color(TEXT_MUTED),
-                            );
-                            ui.add_space(8.0);
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new("↻  Actualizar modelos").size(14.0),
-                                    )
-                                    .fill(Color32::from_rgb(35, 45, 60))
-                                    .stroke(Stroke::new(1.0, BORDER))
-                                    .rounding(6.0),
-                                )
-                                .clicked()
-                            {
-                                self.ollama_models = ollama::list_models();
-                                self.ollama_selected_index = self
-                                    .ollama_selected_index
-                                    .min(self.ollama_models.len().saturating_sub(1));
+                            let response = response.on_hover_text(name);
+                            if response.clicked() {
+                                self.ollama_selected_index = i;
                             }
                         }
-                    }
+                    });
+            }
 
-                    ui.add_space(24.0);
-                    ui.separator();
-                    ui.add_space(16.0);
+            ui.add_space(10.0);
+            if ui
+                .add(
+                    egui::Button::new(
+                        RichText::new(format!("{} Actualizar modelos", icons::ARROW_CLOCKWISE))
+                            .size(12.0),
+                    )
+                    .fill(Color32::from_rgb(35, 45, 60))
+                    .stroke(Stroke::new(1.0, BORDER))
+                    .rounding(7.0),
+                )
+                .clicked()
+            {
+                self.ollama_models = ollama::list_models();
+                self.ollama_selected_index = self
+                    .ollama_selected_index
+                    .min(self.ollama_models.len().saturating_sub(1));
+            }
 
-                    // ── Section: Resúmenes ──────────────────────────────────────────
-                    section_header(ui, "✨  Configuración de resúmenes");
-                    ui.add_space(12.0);
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(10.0);
 
-                    if self.ollama_available && self.ollama_enabled {
-                        // Summary model
-                        ui.label(
-                            RichText::new("Modelo para resúmenes:")
-                                .size(13.0)
-                                .color(TEXT_DIM),
-                        );
-                        ui.add_space(4.0);
-                        if !self.ollama_models.is_empty() {
-                            let current_summary_model = &self.settings.summary_model;
-                            let summary_idx = self
-                                .ollama_models
-                                .iter()
-                                .position(|m| m == current_summary_model)
-                                .unwrap_or(0);
-                            egui::ComboBox::from_id_source("summary_model_combo")
-                                .selected_text(RichText::new(current_summary_model).size(14.0))
-                                .width(ui.available_width())
-                                .show_ui(ui, |ui| {
-                                    for (i, name) in self.ollama_models.iter().enumerate() {
-                                        let selected = i == summary_idx;
-                                        if ui
-                                            .selectable_label(
-                                                selected,
-                                                RichText::new(name).size(14.0),
-                                            )
-                                            .clicked()
-                                        {
-                                            self.settings.summary_model = name.clone();
-                                        }
-                                    }
-                                });
+            ui.label(
+                RichText::new("Funciones activas")
+                    .size(12.0)
+                    .color(TEXT_DIM),
+            );
+            ui.add_space(5.0);
+            ui.label(RichText::new(format!("{} Corrección ortográfica", ICON_CHECK)).size(11.0));
+            ui.label(RichText::new(format!("{} Mejora semántica", ICON_CHECK)).size(11.0));
+            ui.label(RichText::new(format!("{} Limpieza de ruido", ICON_CHECK)).size(11.0));
+
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Uso estimado: Bajo")
+                    .size(10.0)
+                    .color(TEXT_MUTED),
+            );
+        });
+    }
+
+    fn render_summary_section(&mut self, ui: &mut egui::Ui) {
+        let frame = egui::Frame::group(ui.style())
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(18.0, 16.0));
+
+        frame.show(ui, |ui| {
+            ui.label(
+                RichText::new(format!("{} Resúmenes", ICON_MAGIC))
+                    .size(16.0)
+                    .strong()
+                    .color(TEXT_PRIMARY),
+            );
+            ui.add_space(12.0);
+
+            if !(self.ollama_available && self.ollama_enabled) {
+                ui.label(
+                    RichText::new("Activa Ollama para configurar los resúmenes automáticos.")
+                        .size(11.0)
+                        .color(TEXT_DIM),
+                );
+                return;
+            }
+
+            ui.label(
+                RichText::new("Modelo para resúmenes")
+                    .size(12.0)
+                    .color(TEXT_DIM),
+            );
+            ui.add_space(5.0);
+            if !self.ollama_models.is_empty() {
+                let current_summary_model = &self.settings.summary_model;
+                let summary_idx = self
+                    .ollama_models
+                    .iter()
+                    .position(|m| m == current_summary_model)
+                    .unwrap_or(0);
+                let field_width = settings_field_width(ui);
+                egui::ComboBox::from_id_source("summary_model_settings")
+                    .selected_text(
+                        RichText::new(truncate_ui_text(current_summary_model, 48)).size(13.0),
+                    )
+                    .width(field_width)
+                    .show_ui(ui, |ui| {
+                        for (i, name) in self.ollama_models.iter().enumerate() {
+                            let selected = i == summary_idx;
+                            let response = ui.selectable_label(
+                                selected,
+                                RichText::new(truncate_ui_text(name, 70)).size(13.0),
+                            );
+                            let response = response.on_hover_text(name);
+                            if response.clicked() {
+                                self.settings.summary_model = name.clone();
+                            }
                         }
-
-                        ui.add_space(12.0);
-
-                        // Streaming mode
-                        ui.label(RichText::new("Modo streaming:").size(13.0).color(TEXT_DIM));
-                        ui.add_space(4.0);
-                        egui::ComboBox::from_id_source("stream_mode_combo")
-                            .selected_text(
-                                RichText::new(&self.settings.summary_stream_mode).size(14.0),
-                            )
-                            .width(150.0)
-                            .show_ui(ui, |ui| {
-                                for mode in ["auto", "stream", "non_stream"] {
-                                    let selected = self.settings.summary_stream_mode == mode;
-                                    if ui
-                                        .selectable_label(selected, RichText::new(mode).size(14.0))
-                                        .clicked()
-                                    {
-                                        self.settings.summary_stream_mode = mode.to_string();
-                                    }
-                                }
-                            });
-
-                        ui.add_space(12.0);
-
-                        // Thinking policy
-                        ui.label(
-                            RichText::new("Política de thinking:")
-                                .size(13.0)
-                                .color(TEXT_DIM),
-                        );
-                        ui.add_space(4.0);
-                        egui::ComboBox::from_id_source("thinking_policy_combo")
-                            .selected_text(
-                                RichText::new(&self.settings.summary_thinking_policy).size(14.0),
-                            )
-                            .width(200.0)
-                            .show_ui(ui, |ui| {
-                                for policy in ["hide_thinking", "store_but_hide", "show_for_debug"]
-                                {
-                                    let selected = self.settings.summary_thinking_policy == policy;
-                                    let label = match policy {
-                                        "hide_thinking" => "Ocultar siempre",
-                                        "store_but_hide" => "Guardar pero ocultar",
-                                        "show_for_debug" => "Mostrar (debug)",
-                                        _ => policy,
-                                    };
-                                    if ui
-                                        .selectable_label(selected, RichText::new(label).size(14.0))
-                                        .clicked()
-                                    {
-                                        self.settings.summary_thinking_policy = policy.to_string();
-                                    }
-                                }
-                            });
-                    } else {
-                        ui.label(
-                            RichText::new("Activa Ollama para configurar resúmenes")
-                                .size(12.0)
-                                .color(TEXT_DIM),
-                        );
-                    }
-
-                    ui.add_space(24.0);
-                    ui.separator();
-                    ui.add_space(16.0);
-
-                    // ── Section: Custom Prompts ─────────────────────────────────────
-                    section_header(ui, "📝  Prompts personalizados");
-                    ui.add_space(12.0);
-
-                    ui.label(
-                        RichText::new("Prompt personalizado (Ejecutivo):")
-                            .size(12.0)
-                            .color(TEXT_DIM),
-                    );
-                    ui.add_sized(
-                        egui::vec2(ui.available_width(), 60.0),
-                        egui::TextEdit::multiline(&mut self.settings.custom_prompt_executive)
-                            .font(FontId::proportional(12.0))
-                            .hint_text("Ej: Enfócate en los puntos clave de la reunión..."),
-                    );
-
-                    ui.add_space(8.0);
-
-                    ui.label(
-                        RichText::new("Prompt personalizado (Tareas):")
-                            .size(12.0)
-                            .color(TEXT_DIM),
-                    );
-                    ui.add_sized(
-                        egui::vec2(ui.available_width(), 60.0),
-                        egui::TextEdit::multiline(&mut self.settings.custom_prompt_tasks)
-                            .font(FontId::proportional(12.0))
-                            .hint_text("Ej: Lista solo las tareas asignadas..."),
-                    );
-
-                    ui.add_space(8.0);
-
-                    ui.label(
-                        RichText::new("Prompt personalizado (Decisiones):")
-                            .size(12.0)
-                            .color(TEXT_DIM),
-                    );
-                    ui.add_sized(
-                        egui::vec2(ui.available_width(), 60.0),
-                        egui::TextEdit::multiline(&mut self.settings.custom_prompt_decisions)
-                            .font(FontId::proportional(12.0))
-                            .hint_text("Ej: Extrae solo las decisiones tomadas..."),
-                    );
-
-                    ui.add_space(24.0);
-                    ui.separator();
-                    ui.add_space(16.0);
-
-                    // ── Section: Idioma ────────────────────────────────────────────
-                    section_header(ui, "🌐  Idioma por defecto");
-                    ui.add_space(12.0);
-
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Idioma:").size(13.0).color(TEXT_DIM));
-                        ui.add_space(8.0);
-                        egui::ComboBox::from_id_source("language_combo")
-                            .selected_text(
-                                RichText::new(&self.settings.language_default).size(14.0),
-                            )
-                            .width(120.0)
-                            .show_ui(ui, |ui| {
-                                for lang in ["es", "en"] {
-                                    let selected = self.settings.language_default == lang;
-                                    if ui
-                                        .selectable_label(selected, RichText::new(lang).size(14.0))
-                                        .clicked()
-                                    {
-                                        self.settings.language_default = lang.to_string();
-                                    }
-                                }
-                            });
                     });
+            }
 
-                    ui.add_space(24.0);
-                    ui.separator();
-                    ui.add_space(16.0);
-
-                    // ── Section: Hotkeys ────────────────────────────────────────────
-                    section_header(ui, "⌨️  Atajos de teclado");
-                    ui.add_space(12.0);
-
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Iniciar/Detener:").size(13.0).color(TEXT_DIM));
-                        ui.add_space(8.0);
-                        ui.add_sized(
-                            egui::vec2(180.0, 24.0),
-                            egui::TextEdit::singleline(&mut self.settings.hotkey_start_stop)
-                                .font(FontId::proportional(14.0)),
-                        );
-                    });
-
-                    ui.add_space(8.0);
-
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Highlight:").size(13.0).color(TEXT_DIM));
-                        ui.add_space(8.0);
-                        ui.add_sized(
-                            egui::vec2(180.0, 24.0),
-                            egui::TextEdit::singleline(&mut self.settings.hotkey_highlight)
-                                .font(FontId::proportional(14.0)),
-                        );
-                    });
-
-                    ui.add_space(24.0);
-                    ui.separator();
-                    ui.add_space(16.0);
-
-                    // ── Section: Carpeta de grabaciones ────────────────────────────
-                    section_header(ui, "📁  Carpeta de grabaciones");
-                    ui.add_space(12.0);
-
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.settings.recordings_folder)
-                            .desired_width(f32::INFINITY)
-                            .font(FontId::proportional(15.0)),
-                    );
-
-                    ui.add_space(20.0);
-
-                    // ── Save button ────────────────────────────────────────────────
-                    ui.vertical_centered(|ui| {
-                        let save_btn = egui::Button::new(
-                            RichText::new("  Guardar configuración  ")
-                                .size(16.0)
-                                .color(Color32::WHITE),
-                        )
-                        .fill(ACCENT_BLUE)
-                        .rounding(8.0);
-
+            ui.add_space(12.0);
+            ui.label(RichText::new("Modo streaming").size(12.0).color(TEXT_DIM));
+            ui.add_space(5.0);
+            egui::ComboBox::from_id_source("stream_mode_settings")
+                .selected_text(RichText::new(&self.settings.summary_stream_mode).size(13.0))
+                .width(settings_field_width(ui))
+                .show_ui(ui, |ui| {
+                    for mode in ["auto", "stream", "non_stream"] {
+                        let selected = self.settings.summary_stream_mode == mode;
                         if ui
-                            .add(save_btn)
-                            .on_hover_text("Guardar la configuración actual")
+                            .selectable_label(selected, RichText::new(mode).size(13.0))
                             .clicked()
                         {
-                            self.settings.input_device_id = self
-                                .input_devices
-                                .get(self.selected_input_index)
-                                .map(|(_, id)| id.clone());
-                            self.settings.output_device_id = self
-                                .output_devices
-                                .get(self.selected_output_index)
-                                .map(|(_, id)| id.clone());
-
-                            if let Some((_, path)) =
-                                self.available_models.get(self.selected_model_index)
-                            {
-                                self.settings.whisper_model = path.clone();
-                            }
-
-                            self.settings.ollama_enabled = self.ollama_enabled;
-                            self.settings.ollama_model = self
-                                .ollama_models
-                                .get(self.ollama_selected_index)
-                                .cloned()
-                                .unwrap_or_default();
-
-                            self.model_changed = false;
-
-                            if let Err(e) = self.settings.save() {
-                                self.config_save_notification =
-                                    Some((format!("Error: {}", e), true));
-                            } else {
-                                self.config_save_notification =
-                                    Some(("✅ Configuración guardada".to_string(), false));
-                            }
+                            self.settings.summary_stream_mode = mode.to_string();
                         }
-                    });
-
-                    // Show notification
-                    if let Some((msg, is_error)) = &self.config_save_notification {
-                        ui.add_space(8.0);
-                        ui.label(RichText::new(msg).size(14.0).color(if *is_error {
-                            ACCENT_RED
-                        } else {
-                            ACCENT_GREEN
-                        }));
                     }
-
-                    ui.add_space(16.0);
                 });
+
+            ui.add_space(12.0);
+            ui.label(
+                RichText::new("Política de thinking")
+                    .size(12.0)
+                    .color(TEXT_DIM),
+            );
+            ui.add_space(5.0);
+            egui::ComboBox::from_id_source("thinking_policy_settings")
+                .selected_text(
+                    RichText::new(match self.settings.summary_thinking_policy.as_str() {
+                        "hide_thinking" => "Ocultar siempre",
+                        "store_but_hide" => "Guardar pero ocultar",
+                        "show_for_debug" => "Mostrar (debug)",
+                        _ => &self.settings.summary_thinking_policy,
+                    })
+                    .size(13.0),
+                )
+                .width(settings_field_width(ui))
+                .show_ui(ui, |ui| {
+                    for policy in ["hide_thinking", "store_but_hide", "show_for_debug"] {
+                        let selected = self.settings.summary_thinking_policy == policy;
+                        let label = match policy {
+                            "hide_thinking" => "Ocultar siempre",
+                            "store_but_hide" => "Guardar pero ocultar",
+                            "show_for_debug" => "Mostrar (debug)",
+                            _ => policy,
+                        };
+                        if ui
+                            .selectable_label(selected, RichText::new(label).size(13.0))
+                            .clicked()
+                        {
+                            self.settings.summary_thinking_policy = policy.to_string();
+                        }
+                    }
+                });
+        });
+    }
+
+    fn render_prompts_section(&mut self, ui: &mut egui::Ui) {
+        let frame = egui::Frame::group(ui.style())
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(18.0, 16.0));
+
+        frame.show(ui, |ui| {
+            ui.label(
+                RichText::new(format!("{} Prompts personalizados", ICON_FILE))
+                    .size(16.0)
+                    .strong()
+                    .color(TEXT_PRIMARY),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("Edita cada plantilla según el tipo de resumen que quieras generar.")
+                    .size(11.0)
+                    .color(TEXT_MUTED),
+            );
+            ui.add_space(12.0);
+
+            egui::CollapsingHeader::new(RichText::new("Ejecutivo").size(13.0).color(TEXT_PRIMARY))
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.add_space(6.0);
+                    ui.add_sized(
+                        egui::vec2(ui.available_width(), 84.0),
+                        egui::TextEdit::multiline(&mut self.settings.custom_prompt_executive)
+                            .font(FontId::proportional(12.0))
+                            .hint_text(
+                                "Ej: Enfócate en puntos clave, contexto y decisiones finales.",
+                            ),
+                    );
+                });
+
+            ui.add_space(8.0);
+            egui::CollapsingHeader::new(RichText::new("Tareas").size(13.0).color(TEXT_PRIMARY))
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.add_space(6.0);
+                    ui.add_sized(
+                        egui::vec2(ui.available_width(), 84.0),
+                        egui::TextEdit::multiline(&mut self.settings.custom_prompt_tasks)
+                            .font(FontId::proportional(12.0))
+                            .hint_text("Ej: Lista tareas con responsable, fecha y prioridad."),
+                    );
+                });
+
+            ui.add_space(8.0);
+            egui::CollapsingHeader::new(RichText::new("Decisiones").size(13.0).color(TEXT_PRIMARY))
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.add_space(6.0);
+                    ui.add_sized(
+                        egui::vec2(ui.available_width(), 84.0),
+                        egui::TextEdit::multiline(&mut self.settings.custom_prompt_decisions)
+                            .font(FontId::proportional(12.0))
+                            .hint_text("Ej: Extrae acuerdos, alcance y fecha de ejecución."),
+                    );
+                });
+        });
+    }
+
+    fn render_system_section(&mut self, ui: &mut egui::Ui) {
+        let frame = egui::Frame::group(ui.style())
+            .fill(BG_CARD)
+            .stroke(Stroke::new(1.0, BORDER))
+            .rounding(12.0)
+            .inner_margin(egui::Margin::symmetric(18.0, 16.0));
+
+        frame.show(ui, |ui| {
+            ui.label(
+                RichText::new(format!("{} Sistema", ICON_SETTINGS))
+                    .size(16.0)
+                    .strong()
+                    .color(TEXT_PRIMARY),
+            );
+
+            ui.add_space(14.0);
+            ui.label(RichText::new("Idioma").size(12.0).color(TEXT_DIM));
+            ui.add_space(5.0);
+            egui::ComboBox::from_id_source("language_settings")
+                .selected_text(RichText::new(&self.settings.language_default).size(13.0))
+                .width(settings_field_width(ui))
+                .show_ui(ui, |ui| {
+                    for lang in ["es", "en"] {
+                        let selected = self.settings.language_default == lang;
+                        if ui
+                            .selectable_label(selected, RichText::new(lang).size(13.0))
+                            .clicked()
+                        {
+                            self.settings.language_default = lang.to_string();
+                        }
+                    }
+                });
+
+            ui.add_space(14.0);
+            ui.separator();
+            ui.add_space(12.0);
+
+            ui.label(
+                RichText::new("Atajos de teclado")
+                    .size(12.0)
+                    .color(TEXT_DIM),
+            );
+            ui.add_space(8.0);
+
+            ui.label(RichText::new("Iniciar/Detener").size(12.0).color(TEXT_DIM));
+            ui.add_space(4.0);
+            ui.add_sized(
+                egui::vec2(settings_field_width(ui), 28.0),
+                egui::TextEdit::singleline(&mut self.settings.hotkey_start_stop)
+                    .font(FontId::proportional(13.0)),
+            );
+
+            ui.add_space(10.0);
+            ui.label(RichText::new("Highlight").size(12.0).color(TEXT_DIM));
+            ui.add_space(4.0);
+            ui.add_sized(
+                egui::vec2(settings_field_width(ui), 28.0),
+                egui::TextEdit::singleline(&mut self.settings.hotkey_highlight)
+                    .font(FontId::proportional(13.0)),
+            );
+
+            ui.add_space(14.0);
+            ui.separator();
+            ui.add_space(12.0);
+
+            ui.label(
+                RichText::new("Carpeta de grabaciones")
+                    .size(12.0)
+                    .color(TEXT_DIM),
+            );
+            ui.add_space(5.0);
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings.recordings_folder)
+                    .desired_width(f32::INFINITY)
+                    .font(FontId::proportional(14.0)),
+            );
+        });
+    }
+
+    fn show_settings_tab(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(8.0);
+
+        egui::SidePanel::left("settings_sidebar")
+            .resizable(false)
+            .exact_width(172.0)
+            .frame(egui::Frame::none())
+            .show_inside(ui, |ui| {
+                self.render_sidebar(ui);
+            });
+
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none())
+            .show_inside(ui, |ui| {
+                ui.set_min_height(ui.available_height().max(640.0));
+
+                egui::ScrollArea::vertical()
+                    .id_source("settings_content_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let available = ui.available_width();
+                        let content_width = SETTINGS_CONTENT_MAX_WIDTH.min(available);
+                        let side_padding = ((available - content_width) * 0.5).max(0.0);
+
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(side_padding);
+                            ui.vertical(|ui| {
+                                ui.set_width(content_width);
+
+                                match self.settings_section {
+                                    SettingsSection::Audio => self.render_audio_section(ui),
+                                    SettingsSection::Transcription => {
+                                        self.render_transcription_section(ui)
+                                    }
+                                    SettingsSection::Ollama => self.render_ollama_section(ui),
+                                    SettingsSection::Summaries => self.render_summary_section(ui),
+                                    SettingsSection::Prompts => self.render_prompts_section(ui),
+                                    SettingsSection::System => self.render_system_section(ui),
+                                }
+
+                                ui.add_space(20.0);
+
+                                egui::Frame::group(ui.style())
+                                    .fill(BG_CARD)
+                                    .stroke(Stroke::new(1.0, BORDER))
+                                    .rounding(10.0)
+                                    .inner_margin(egui::Margin::symmetric(16.0, 14.0))
+                                    .show(ui, |ui| {
+                                        ui.vertical_centered(|ui| {
+                                            let save_btn = egui::Button::new(
+                                                RichText::new("Guardar configuración")
+                                                    .size(15.0)
+                                                    .strong()
+                                                    .color(Color32::WHITE),
+                                            )
+                                            .fill(ACCENT_BLUE)
+                                            .rounding(9.0)
+                                            .min_size(egui::vec2(250.0, 42.0));
+
+                                            if ui.add(save_btn).clicked() {
+                                                self.settings.input_device_id = self
+                                                    .input_devices
+                                                    .get(self.selected_input_index)
+                                                    .map(|(_, id)| id.clone());
+                                                self.settings.output_device_id = self
+                                                    .output_devices
+                                                    .get(self.selected_output_index)
+                                                    .map(|(_, id)| id.clone());
+
+                                                if let Some((_, path)) = self
+                                                    .available_models
+                                                    .get(self.selected_model_index)
+                                                {
+                                                    self.settings.whisper_model = path.clone();
+                                                }
+
+                                                self.settings.ollama_enabled = self.ollama_enabled;
+                                                self.settings.ollama_model = self
+                                                    .ollama_models
+                                                    .get(self.ollama_selected_index)
+                                                    .cloned()
+                                                    .unwrap_or_default();
+
+                                                self.model_changed = false;
+
+                                                if let Err(e) = self.settings.save() {
+                                                    self.config_save_notification =
+                                                        Some((format!("Error: {}", e), true));
+                                                } else {
+                                                    self.config_save_notification = Some((
+                                                        "Configuración guardada".to_string(),
+                                                        false,
+                                                    ));
+                                                }
+                                            }
+
+                                            if let Some((msg, is_error)) =
+                                                &self.config_save_notification
+                                            {
+                                                ui.add_space(8.0);
+                                                ui.label(RichText::new(msg).size(13.0).color(
+                                                    if *is_error {
+                                                        ACCENT_RED
+                                                    } else {
+                                                        ACCENT_GREEN
+                                                    },
+                                                ));
+                                            }
+                                        });
+                                    });
+
+                                ui.add_space(16.0);
+                            });
+                        });
+                    });
             });
     }
+
+    // ── About tab ────────────────────────────────────────────────────────────
 
     // ── About tab ────────────────────────────────────────────────────────────
 
@@ -2897,116 +3143,226 @@ impl App {
         egui::ScrollArea::vertical()
             .id_source("about_scroll")
             .show(ui, |ui| {
-                ui.add_space(24.0);
-
-                // ── Logo / title block ────────────────────────────────────────
-                ui.vertical_centered(|ui| {
-                    // App name with gradient-like effect using two labels
-                    ui.label(
-                        RichText::new("Scrivano")
-                            .size(32.0)
-                            .strong()
-                            .color(TEXT_PRIMARY),
-                    );
-                    ui.add_space(6.0);
-
-                    // Version badge
-                    let version = format!("  v{}  ", env!("CARGO_PKG_VERSION"));
-                    let (badge_rect, _) = ui.allocate_exact_size(
-                        egui::vec2(80.0, 26.0),
-                        Sense::hover(),
-                    );
-                    ui.painter().rect_filled(badge_rect, 13.0, ACCENT_BLUE);
-                    ui.painter().text(
-                        badge_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        &version,
-                        FontId::proportional(13.0),
-                        Color32::WHITE,
-                    );
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new("Transcripción local de audio · 100% offline")
-                            .size(14.0)
-                            .color(TEXT_DIM),
-                    );
-                });
-
-                ui.add_space(20.0);
-                ui.separator();
                 ui.add_space(16.0);
 
-                // ── Feature cards ─────────────────────────────────────────────
-                ui.vertical_centered(|ui| {
-                    ui.label(
-                        RichText::new("Características").size(16.0).color(TEXT_DIM),
-                    );
-                });
-                ui.add_space(10.0);
+                let content_width = 920.0_f32.min(ui.available_width());
+                let side_padding = ((ui.available_width() - content_width) * 0.5).max(0.0);
 
-                let features = [
-                    ("🎙", "Captura de audio del sistema", "Graba cualquier sonido que reproduzca tu computador via PulseAudio / PipeWire"),
-                    ("🤖", "Whisper offline", "Transcripción local con modelos GGML — ningún dato sale de tu máquina"),
-                    ("✨", "Mejora con Ollama", "Corrección opcional de ortografía y puntuación usando LLMs locales"),
-                    ("🗄", "Historial SQLite", "Registro de grabaciones con fecha, duración y acceso rápido a los archivos"),
-                ];
+                ui.horizontal(|ui| {
+                    ui.add_space(side_padding);
+                    ui.vertical(|ui| {
+                        ui.set_width(content_width);
 
-                for (icon, title, desc) in &features {
-                    about_feature_card(ui, icon, title, desc);
-                    ui.add_space(6.0);
-                }
+                        // ── Header Card ──────────────────────────────────────
+                        let header_frame = egui::Frame::group(ui.style())
+                            .fill(BG_CARD)
+                            .stroke(Stroke::new(1.0, BORDER))
+                            .rounding(12.0)
+                            .inner_margin(egui::Margin::symmetric(20.0, 16.0));
 
-                ui.add_space(16.0);
-                ui.separator();
-                ui.add_space(16.0);
+                        header_frame.show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    RichText::new("Scrivano")
+                                        .size(32.0)
+                                        .strong()
+                                        .color(TEXT_PRIMARY),
+                                );
+                                ui.add_space(8.0);
 
-                // ── Tech stack ────────────────────────────────────────────────
-                ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("Stack tecnológico").size(15.0).color(TEXT_DIM));
-                    ui.add_space(10.0);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                        for (label, color) in [
-                            ("Rust", Color32::from_rgb(222, 90, 40)),
-                            ("egui 0.27", ACCENT_BLUE),
-                            ("whisper-rs 0.15", Color32::from_rgb(34, 160, 100)),
-                            ("PulseAudio", Color32::from_rgb(140, 90, 220)),
-                            ("Ollama", Color32::from_rgb(200, 160, 40)),
-                            ("SQLite", Color32::from_rgb(80, 160, 200)),
-                        ] {
-                            tech_badge(ui, label, color);
-                        }
+                                let version = format!("  v{}  ", env!("CARGO_PKG_VERSION"));
+                                let (badge_rect, _) =
+                                    ui.allocate_exact_size(egui::vec2(84.0, 26.0), Sense::hover());
+                                ui.painter().rect_filled(badge_rect, 13.0, ACCENT_BLUE);
+                                ui.painter().text(
+                                    badge_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    &version,
+                                    FontId::proportional(13.0),
+                                    Color32::WHITE,
+                                );
+                                ui.add_space(8.0);
+                                ui.label(
+                                    RichText::new("Transcripción local de audio · 100% offline")
+                                        .size(14.0)
+                                        .color(TEXT_DIM),
+                                );
+                            });
+                        });
+
+                        ui.add_space(16.0);
+
+                        // ── Features Section ─────────────────────────────────
+                        let features_frame = egui::Frame::group(ui.style())
+                            .fill(BG_CARD)
+                            .stroke(Stroke::new(1.0, BORDER))
+                            .rounding(12.0)
+                            .inner_margin(egui::Margin::symmetric(16.0, 14.0));
+
+                        features_frame.show(ui, |ui| {
+                            ui.label(
+                                RichText::new("Características")
+                                    .size(15.0)
+                                    .strong()
+                                    .color(TEXT_PRIMARY),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(
+                                    "Funciones clave para capturar, transcribir y organizar reuniones.",
+                                )
+                                .size(11.0)
+                                .color(TEXT_MUTED),
+                            );
+                            ui.add_space(12.0);
+
+                            let features = [
+                                (
+                                    ICON_MIC,
+                                    "Captura de audio del sistema",
+                                    "Graba cualquier sonido reproducido por tu equipo usando PulseAudio o PipeWire.",
+                                    Color32::from_rgb(56, 139, 253),
+                                ),
+                                (
+                                    ICON_TRANSCRIPT,
+                                    "Whisper offline",
+                                    "Transcripción local con modelos GGML; tus datos nunca salen de tu máquina.",
+                                    Color32::from_rgb(34, 197, 94),
+                                ),
+                                (
+                                    ICON_MAGIC,
+                                    "Mejora con Ollama",
+                                    "Corrección opcional de ortografía y semántica con modelos locales.",
+                                    Color32::from_rgb(139, 92, 246),
+                                ),
+                                (
+                                    ICON_FOLDER,
+                                    "Historial SQLite",
+                                    "Consulta y gestiona grabaciones con fecha, duración y resúmenes en un solo lugar.",
+                                    Color32::from_rgb(80, 160, 200),
+                                ),
+                            ];
+
+                            if ui.available_width() >= 760.0 {
+                                egui::Grid::new("about_features_grid")
+                                    .num_columns(2)
+                                    .spacing(egui::vec2(10.0, 10.0))
+                                    .show(ui, |ui| {
+                                        for (idx, (icon, title, desc, accent)) in
+                                            features.iter().enumerate()
+                                        {
+                                            about_feature_card(ui, icon, title, desc, *accent);
+                                            if idx % 2 == 1 {
+                                                ui.end_row();
+                                            }
+                                        }
+                                    });
+                            } else {
+                                for (icon, title, desc, accent) in features {
+                                    about_feature_card(ui, icon, title, desc, accent);
+                                    ui.add_space(8.0);
+                                }
+                            }
+                        });
+
+                        ui.add_space(16.0);
+
+                        // ── Tech Stack Section ───────────────────────────────
+                        ui.label(
+                            RichText::new("Stack tecnológico")
+                                .size(14.0)
+                                .strong()
+                                .color(TEXT_PRIMARY),
+                        );
+                        ui.add_space(8.0);
+
+                        let tech_frame = egui::Frame::group(ui.style())
+                            .fill(BG_CARD)
+                            .stroke(Stroke::new(1.0, BORDER))
+                            .rounding(12.0)
+                            .inner_margin(egui::Margin::symmetric(16.0, 12.0));
+
+                        tech_frame.show(ui, |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                                for (label, color) in [
+                                    ("Rust", Color32::from_rgb(222, 90, 40)),
+                                    ("egui 0.27", ACCENT_BLUE),
+                                    ("whisper-rs 0.15", Color32::from_rgb(34, 160, 100)),
+                                    ("PulseAudio", Color32::from_rgb(140, 90, 220)),
+                                    ("Ollama", Color32::from_rgb(200, 160, 40)),
+                                    ("SQLite", Color32::from_rgb(80, 160, 200)),
+                                ] {
+                                    tech_badge(ui, label, color);
+                                }
+                            });
+                        });
+
+                        ui.add_space(16.0);
+
+                        // ── Author Card ──────────────────────────────────────
+                        let author_frame = egui::Frame::group(ui.style())
+                            .fill(BG_CARD)
+                            .stroke(Stroke::new(1.0, BORDER))
+                            .rounding(12.0)
+                            .inner_margin(egui::Margin::symmetric(20.0, 14.0));
+
+                        author_frame.show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    RichText::new("Desarrollado por")
+                                        .size(12.0)
+                                        .color(TEXT_MUTED),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new("Gustavo Gutiérrez")
+                                        .size(16.0)
+                                        .strong()
+                                        .color(TEXT_PRIMARY),
+                                );
+                                ui.add_space(2.0);
+                                ui.label(
+                                    RichText::new("Bogotá, Colombia")
+                                        .size(12.0)
+                                        .color(TEXT_DIM),
+                                );
+                            });
+                        });
+
+                        ui.add_space(20.0);
                     });
                 });
-
-                ui.add_space(20.0);
-                ui.separator();
-                ui.add_space(16.0);
-
-                // ── Author block ──────────────────────────────────────────────
-                ui.vertical_centered(|ui| {
-                    ui.label(
-                        RichText::new("Desarrollado por")
-                            .size(13.0)
-                            .color(TEXT_MUTED),
-                    );
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new("Gustavo Gutiérrez")
-                            .size(18.0)
-                            .strong()
-                            .color(TEXT_PRIMARY),
-                    );
-                    ui.label(
-                        RichText::new("Bogotá, Colombia")
-                            .size(13.0)
-                            .color(TEXT_DIM),
-                    );
-                });
-
-                ui.add_space(20.0);
             });
     }
+}
+
+fn about_feature_card(ui: &mut egui::Ui, icon: &str, title: &str, desc: &str, accent: Color32) {
+    let frame = egui::Frame::group(ui.style())
+        .fill(BG_CARD)
+        .stroke(Stroke::new(1.0, BORDER))
+        .rounding(12.0)
+        .inner_margin(egui::Margin::symmetric(14.0, 12.0));
+
+    frame.show(ui, |ui| {
+        ui.set_min_height(118.0);
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                egui::Frame::none()
+                    .fill(accent.gamma_multiply(0.22))
+                    .stroke(Stroke::new(1.0, accent))
+                    .rounding(8.0)
+                    .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(icon).size(16.0).color(accent));
+                    });
+                ui.add_space(8.0);
+                ui.label(RichText::new(title).size(14.0).strong().color(TEXT_PRIMARY));
+            });
+            ui.add_space(8.0);
+            ui.label(RichText::new(desc).size(11.5).color(TEXT_DIM));
+        });
+    });
 }
 
 // ── Recording row renderer ────────────────────────────────────────────────────
@@ -3133,28 +3489,24 @@ fn section_header(ui: &mut egui::Ui, title: &str) {
     ui.add_space(2.0);
 }
 
+fn settings_field_width(ui: &egui::Ui) -> f32 {
+    SETTINGS_FIELD_MAX_WIDTH.min(ui.available_width())
+}
+
+fn truncate_ui_text(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let preview: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{}...", preview)
+    } else {
+        preview
+    }
+}
+
 fn status_badge(ui: &mut egui::Ui, text: &str, color: Color32) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("●").size(13.0).color(color));
         ui.label(RichText::new(text).size(14.0).color(TEXT_PRIMARY));
-    });
-}
-
-fn about_feature_card(ui: &mut egui::Ui, icon: &str, title: &str, desc: &str) {
-    let frame = egui::Frame::none()
-        .fill(BG_CARD)
-        .stroke(Stroke::new(1.0, BORDER))
-        .rounding(8.0)
-        .inner_margin(egui::Margin::symmetric(14.0, 10.0));
-    frame.show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(icon).size(24.0));
-            ui.add_space(8.0);
-            ui.vertical(|ui| {
-                ui.label(RichText::new(title).size(15.0).strong().color(TEXT_PRIMARY));
-                ui.label(RichText::new(desc).size(12.0).color(TEXT_DIM));
-            });
-        });
     });
 }
 
