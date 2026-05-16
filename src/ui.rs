@@ -16,10 +16,12 @@ use egui_phosphor::regular as icons;
 use hound::{WavSpec, WavWriter};
 use whisper_rs::WhisperContext;
 
-use crate::audio::spawn_system_audio_recorder;
+use crate::audio::{spawn_system_audio_recorder, ChunkSink};
+use crate::audio_chunker::AudioChunker;
 use crate::audio_devices::{get_input_devices, get_output_devices, scan_models, AppSettings};
 use crate::database::{Database, RecordingEntry, Summary};
 use crate::ollama;
+use crate::recording_session::{ManifestEntry, RecordingSession};
 use crate::transcription::{transcribe_with_segments, TranscriptionLanguage};
 use std::collections::HashMap;
 
@@ -187,6 +189,93 @@ pub struct App {
     // ── Stopping delay ───────────────────────────────────────────────────────
     is_stopping: bool, // true when waiting to stop recording
     stop_requested_time: Option<std::time::Instant>, // when stop was requested
+    chunk_ui_state: Arc<Mutex<ChunkUiState>>,
+    chunk_pipeline: Option<Arc<Mutex<ChunkPipeline>>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ChunkUiState {
+    active_chunk_index: u32,
+    closed_chunks: u32,
+    successful_chunks: u32,
+    failed_chunks: Vec<u32>,
+    retry_target: Option<u32>,
+}
+
+impl ChunkUiState {
+    fn on_chunk_rotated(&mut self, chunk_index: u32) {
+        self.active_chunk_index = chunk_index;
+    }
+
+    fn on_chunk_closed(&mut self, chunk_index: u32, success: bool) {
+        self.closed_chunks += 1;
+        if success {
+            self.successful_chunks += 1;
+            self.failed_chunks.retain(|c| *c != chunk_index);
+            if self.retry_target == Some(chunk_index) {
+                self.retry_target = None;
+            }
+        } else if !self.failed_chunks.contains(&chunk_index) {
+            self.failed_chunks.push(chunk_index);
+        }
+    }
+
+    fn mark_retry_requested(&mut self, chunk_index: u32) {
+        if self.failed_chunks.contains(&chunk_index) {
+            self.retry_target = Some(chunk_index);
+        }
+    }
+
+    fn progress_percent(&self) -> i32 {
+        if self.closed_chunks == 0 {
+            return 0;
+        }
+        ((self.successful_chunks * 100) / self.closed_chunks) as i32
+    }
+}
+
+struct ChunkPipeline {
+    session: RecordingSession,
+    chunker: AudioChunker,
+    ui_state: Arc<Mutex<ChunkUiState>>,
+}
+
+impl ChunkPipeline {
+    fn new(session: RecordingSession, ui_state: Arc<Mutex<ChunkUiState>>) -> Self {
+        Self {
+            chunker: AudioChunker::new(&session.session_dir, 16_000, 25, 5),
+            session,
+            ui_state,
+        }
+    }
+
+    fn push_samples(&mut self, samples: &[f32]) {
+        let closed = match self.chunker.push_samples(samples) {
+            Ok(closed) => closed,
+            Err(_) => return,
+        };
+
+        for chunk in closed {
+            let filename = chunk
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_string();
+
+            let entry = ManifestEntry {
+                chunk_index: chunk.chunk_index,
+                filename,
+                start_sample: chunk.start_sample,
+                end_sample: chunk.end_sample,
+            };
+            let append_ok = self.session.append(&entry).is_ok();
+
+            let mut ui_state = self.ui_state.lock().unwrap();
+            ui_state.on_chunk_rotated(chunk.chunk_index + 1);
+            ui_state.on_chunk_closed(chunk.chunk_index, append_ok);
+        }
+    }
 }
 
 impl App {
@@ -304,6 +393,8 @@ impl App {
             spectrum_peak: vec![0.0; 48], // peak hold values
             is_stopping: false,
             stop_requested_time: None,
+            chunk_ui_state: Arc::new(Mutex::new(ChunkUiState::default())),
+            chunk_pipeline: None,
         }
     }
 
@@ -724,6 +815,43 @@ impl App {
                             self.add_highlight_during_recording(None);
                         }
                     });
+
+                    let chunk_state = self.chunk_ui_state.lock().unwrap().clone();
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Chunks cerrados: {} · Activo: {} · Progreso: {}%",
+                            chunk_state.closed_chunks,
+                            chunk_state.active_chunk_index,
+                            chunk_state.progress_percent()
+                        ))
+                        .size(12.0)
+                        .color(TEXT_DIM),
+                    );
+
+                    if !chunk_state.failed_chunks.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(
+                                RichText::new("Chunks con error:")
+                                    .size(12.0)
+                                    .color(ACCENT_RED_HOVER),
+                            );
+                            for failed in &chunk_state.failed_chunks {
+                                let retry_button = egui::Button::new(
+                                    RichText::new(format!("Retry #{}", failed)).size(11.0),
+                                )
+                                .fill(Color32::from_rgb(60, 30, 30))
+                                .stroke(Stroke::new(1.0, ACCENT_RED_HOVER));
+
+                                if ui.add(retry_button).clicked() {
+                                    self.chunk_ui_state
+                                        .lock()
+                                        .unwrap()
+                                        .mark_retry_requested(*failed);
+                                }
+                            }
+                        });
+                    }
                 } else if !is_busy {
                     ui.label(
                         RichText::new("Presiona Iniciar grabación para comenzar")
@@ -2062,6 +2190,7 @@ impl App {
         self.waveform_buffer.lock().unwrap().clear();
         self.waveform_buffer.lock().unwrap().clear();
         self.pending_highlights.lock().unwrap().clear();
+        *self.chunk_ui_state.lock().unwrap() = ChunkUiState::default();
         self.transcript_edit = "Grabando...".to_string();
         *self.transcript.lock().unwrap() = "Grabando...".to_string();
         self.recording.store(true, Ordering::SeqCst);
@@ -2081,6 +2210,37 @@ impl App {
 
         let source_name = choose_capture_source(&input_source, &output_monitor);
 
+        let chunk_sessions_root =
+            std::path::PathBuf::from(&self.settings.recordings_folder).join("chunk_sessions");
+        let session_seed = format!(
+            "{}-{}",
+            self.recording_start_timestamp
+                .as_deref()
+                .unwrap_or("recording-session"),
+            std::process::id()
+        );
+
+        let chunk_sink: Option<ChunkSink> =
+            match RecordingSession::open(&chunk_sessions_root, &session_seed) {
+                Ok(session) => {
+                    let pipeline = Arc::new(Mutex::new(ChunkPipeline::new(
+                        session,
+                        self.chunk_ui_state.clone(),
+                    )));
+                    self.chunk_pipeline = Some(pipeline.clone());
+
+                    Some(Arc::new(move |samples: &[f32]| {
+                        if let Ok(mut guard) = pipeline.lock() {
+                            guard.push_samples(samples);
+                        }
+                    }))
+                }
+                Err(_) => {
+                    self.chunk_pipeline = None;
+                    None
+                }
+            };
+
         eprintln!("[ui] Grabando desde: {:?}", source_name);
 
         spawn_system_audio_recorder(
@@ -2088,11 +2248,17 @@ impl App {
             self.audio_buffer.clone(),
             self.waveform_buffer.clone(),
             source_name,
+            chunk_sink,
         );
     }
 
     fn stop_and_transcribe(&mut self) {
         self.recording.store(false, Ordering::SeqCst);
+        if let Some(pipeline) = self.chunk_pipeline.take() {
+            if let Ok(guard) = pipeline.lock() {
+                let _ = guard.session.finalize();
+            }
+        }
 
         let pending_highlights = self.pending_highlights.clone();
         let buffer = self.audio_buffer.clone();
@@ -3625,7 +3791,7 @@ fn draw_waveform_gradient(painter: &Painter, rect: Rect, samples: &[f32]) {
 
 #[cfg(test)]
 mod tests {
-    use super::choose_capture_source;
+    use super::{choose_capture_source, ChunkUiState};
 
     #[test]
     fn choose_capture_source_prefers_input() {
@@ -3646,5 +3812,35 @@ mod tests {
     fn choose_capture_source_defaults_when_empty() {
         let selected = choose_capture_source("", "");
         assert_eq!(selected, "default");
+    }
+
+    #[test]
+    fn chunk_ui_state_tracks_active_progress_and_failures() {
+        let mut state = ChunkUiState::default();
+
+        state.on_chunk_rotated(0);
+        state.on_chunk_closed(0, true);
+        state.on_chunk_rotated(1);
+        state.on_chunk_closed(1, false);
+
+        assert_eq!(state.active_chunk_index, 1);
+        assert_eq!(state.closed_chunks, 2);
+        assert_eq!(state.successful_chunks, 1);
+        assert_eq!(state.failed_chunks, vec![1]);
+        assert_eq!(state.progress_percent(), 50);
+    }
+
+    #[test]
+    fn chunk_ui_state_retry_targets_only_failed_chunk() {
+        let mut state = ChunkUiState::default();
+        state.on_chunk_closed(2, false);
+
+        assert_eq!(state.retry_target, None);
+        state.mark_retry_requested(2);
+        assert_eq!(state.retry_target, Some(2));
+
+        state.on_chunk_closed(2, true);
+        assert!(!state.failed_chunks.contains(&2));
+        assert_eq!(state.retry_target, None);
     }
 }

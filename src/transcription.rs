@@ -35,6 +35,20 @@ pub struct TranscriptSegment {
     pub text: String,
 }
 
+pub fn apply_time_offset(
+    segments: &[TranscriptSegment],
+    offset_sec: f64,
+) -> Vec<TranscriptSegment> {
+    segments
+        .iter()
+        .map(|segment| TranscriptSegment {
+            start_sec: segment.start_sec + offset_sec,
+            end_sec: segment.end_sec + offset_sec,
+            text: segment.text.clone(),
+        })
+        .collect()
+}
+
 /// Initialize Whisper context with given model path
 pub fn init_whisper(model_path: &str) -> WhisperContext {
     WhisperContext::new_with_params(model_path, WhisperContextParameters::default())
@@ -177,6 +191,20 @@ mod tests {
             TranscriptionLanguage::from_code("en"),
             Some(TranscriptionLanguage::English)
         );
+    }
+
+    #[test]
+    fn apply_time_offset_converts_chunk_relative_to_session_absolute() {
+        let input = vec![TranscriptSegment {
+            start_sec: 0.2,
+            end_sec: 1.5,
+            text: "hola".to_string(),
+        }];
+
+        let output = apply_time_offset(&input, 20.0);
+        assert_eq!(output[0].start_sec, 20.2);
+        assert_eq!(output[0].end_sec, 21.5);
+        assert_eq!(output[0].text, "hola");
     }
 
     #[test]

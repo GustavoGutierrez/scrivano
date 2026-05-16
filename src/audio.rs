@@ -47,6 +47,29 @@ pub const WHISPER_RATE: u32 = 16_000;
 /// Rolling waveform window size (samples at capture rate, ~185ms @ 44100Hz).
 const WAVE_WINDOW: usize = 8_192;
 
+pub type ChunkSink = Arc<dyn Fn(&[f32]) + Send + Sync + 'static>;
+
+fn process_resampled_batch(
+    float_16k: &[f32],
+    float_44k: &[f32],
+    audio_buffer: &Arc<Mutex<Vec<f32>>>,
+    waveform_buffer: &Arc<Mutex<Vec<f32>>>,
+    chunk_sink: Option<&ChunkSink>,
+) {
+    audio_buffer.lock().unwrap().extend_from_slice(float_16k);
+
+    if let Some(sink) = chunk_sink {
+        sink(float_16k);
+    }
+
+    let mut wave = waveform_buffer.lock().unwrap();
+    wave.extend_from_slice(float_44k);
+    if wave.len() > WAVE_WINDOW {
+        let drain_to = wave.len() - WAVE_WINDOW;
+        wave.drain(..drain_to);
+    }
+}
+
 fn connect_record_stream(stream: &mut Stream, source: Option<&str>) -> bool {
     stream
         .connect_record(
@@ -109,6 +132,7 @@ pub fn spawn_system_audio_recorder(
     audio_buffer: Arc<Mutex<Vec<f32>>>,
     waveform_buffer: Arc<Mutex<Vec<f32>>>,
     source_name: String,
+    chunk_sink: Option<ChunkSink>,
 ) {
     thread::spawn(move || {
         // ── Build PulseAudio mainloop + context on this thread ──────────────
@@ -236,17 +260,13 @@ pub fn spawn_system_audio_recorder(
                     // Resample to 16 kHz for Whisper
                     let float_16k = resample_linear(&float_44k, CAPTURE_RATE, WHISPER_RATE);
                     captured_samples += float_16k.len();
-                    audio_buffer.lock().unwrap().extend_from_slice(&float_16k);
-
-                    // Update waveform window
-                    {
-                        let mut wave = waveform_buffer.lock().unwrap();
-                        wave.extend_from_slice(&float_44k);
-                        if wave.len() > WAVE_WINDOW {
-                            let drain_to = wave.len() - WAVE_WINDOW;
-                            wave.drain(..drain_to);
-                        }
-                    }
+                    process_resampled_batch(
+                        &float_16k,
+                        &float_44k,
+                        &audio_buffer,
+                        &waveform_buffer,
+                        chunk_sink.as_ref(),
+                    );
                 }
                 PeekResult::Hole(_) => {
                     stream.discard().ok();
@@ -460,5 +480,32 @@ mod tests {
             0,
             Duration::from_secs(3)
         ));
+    }
+
+    #[test]
+    fn process_resampled_batch_updates_buffers_and_chunk_sink() {
+        let whisper = vec![0.1_f32, 0.2, 0.3];
+        let waveform = vec![0.7_f32, 0.8, 0.9, 1.0];
+
+        let audio_buffer = Arc::new(Mutex::new(Vec::new()));
+        let waveform_buffer = Arc::new(Mutex::new(vec![0.0_f32; WAVE_WINDOW - 2]));
+        let sink_calls: Arc<Mutex<Vec<Vec<f32>>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink_calls_clone = sink_calls.clone();
+        let sink: ChunkSink = Arc::new(move |samples: &[f32]| {
+            sink_calls_clone.lock().unwrap().push(samples.to_vec());
+        });
+
+        process_resampled_batch(
+            &whisper,
+            &waveform,
+            &audio_buffer,
+            &waveform_buffer,
+            Some(&sink),
+        );
+
+        assert_eq!(audio_buffer.lock().unwrap().as_slice(), whisper.as_slice());
+        assert_eq!(waveform_buffer.lock().unwrap().len(), WAVE_WINDOW);
+        assert_eq!(sink_calls.lock().unwrap().len(), 1);
+        assert_eq!(sink_calls.lock().unwrap()[0].as_slice(), whisper.as_slice());
     }
 }

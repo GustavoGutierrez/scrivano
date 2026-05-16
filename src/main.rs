@@ -1,8 +1,11 @@
 mod audio;
+mod audio_chunker;
 mod audio_devices;
+mod chunk_transcription;
 mod database;
 mod ollama;
 mod playback;
+mod recording_session;
 mod summarization;
 mod transcription;
 mod ui;

@@ -111,6 +111,23 @@ pub struct Database {
     conn: Connection,
 }
 
+#[derive(Debug, Clone)]
+pub struct RecordingSessionRow {
+    pub id: i64,
+    pub session_id: String,
+    pub session_dir: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecordingChunkRow {
+    pub id: i64,
+    pub session_id: String,
+    pub chunk_index: i64,
+    pub chunk_path: String,
+    pub status: String,
+}
+
 impl Database {
     pub fn open(db_path: &PathBuf) -> Result<Self> {
         let conn = Connection::open(db_path)?;
@@ -120,6 +137,28 @@ impl Database {
     }
 
     fn init(&self) -> Result<()> {
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS recording_sessions (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id   TEXT NOT NULL UNIQUE,
+                session_dir  TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'active',
+                created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );",
+        )?;
+
+        self.conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS recording_chunks (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id   TEXT NOT NULL,
+                chunk_index  INTEGER NOT NULL,
+                chunk_path   TEXT NOT NULL,
+                status       TEXT NOT NULL DEFAULT 'pending',
+                created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(session_id, chunk_index)
+            );",
+        )?;
+
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS recordings (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -566,5 +605,144 @@ impl Database {
             params![recording_id],
         )?;
         Ok(())
+    }
+
+    pub fn insert_recording_session(&self, session_id: &str, session_dir: &str) -> Result<i64> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO recording_sessions (session_id, session_dir, status)
+             VALUES (?1, ?2, 'active')",
+            params![session_id, session_dir],
+        )?;
+
+        self.conn.query_row(
+            "SELECT id FROM recording_sessions WHERE session_id = ?1",
+            params![session_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn insert_recording_chunk(
+        &self,
+        session_id: &str,
+        chunk_index: i64,
+        chunk_path: &str,
+        status: &str,
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO recording_chunks (session_id, chunk_index, chunk_path, status)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![session_id, chunk_index, chunk_path, status],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn list_recording_chunks(&self, session_id: &str) -> Result<Vec<RecordingChunkRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, chunk_index, chunk_path, status
+             FROM recording_chunks
+             WHERE session_id = ?1
+             ORDER BY chunk_index ASC",
+        )?;
+
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok(RecordingChunkRow {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                chunk_index: row.get(2)?,
+                chunk_path: row.get(3)?,
+                status: row.get(4)?,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn list_recoverable_sessions(&self) -> Result<Vec<RecordingSessionRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, session_dir, status
+             FROM recording_sessions
+             WHERE status = 'active'
+             ORDER BY id DESC",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(RecordingSessionRow {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                session_dir: row.get(2)?,
+                status: row.get(3)?,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn init_is_idempotent_with_session_tables() {
+        let dir = tempfile::tempdir().expect("tempdir must be created");
+        let db_path = dir.path().join("recordings.db");
+
+        let db = Database::open(&db_path).expect("db open must work");
+        let _ = db
+            .insert_recording_session("sess-idempotent", "/tmp/sess-idempotent")
+            .expect("insert session must work");
+
+        let db2 = Database::open(&db_path).expect("second open must work");
+        let sessions = db2
+            .list_recoverable_sessions()
+            .expect("list sessions must work");
+        assert_eq!(sessions.len(), 1);
+    }
+
+    #[test]
+    fn stores_and_reads_chunk_metadata() {
+        let dir = tempfile::tempdir().expect("tempdir must be created");
+        let db_path = dir.path().join("recordings.db");
+        let db = Database::open(&db_path).expect("db open must work");
+
+        db.insert_recording_session("sess-1", "/tmp/sess-1")
+            .expect("session insert must work");
+        db.insert_recording_chunk("sess-1", 0, "/tmp/sess-1/chunk_0000.wav", "succeeded")
+            .expect("chunk insert must work");
+        db.insert_recording_chunk("sess-1", 1, "/tmp/sess-1/chunk_0001.wav", "failed")
+            .expect("chunk insert must work");
+
+        let chunks = db
+            .list_recording_chunks("sess-1")
+            .expect("list chunks must work");
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].chunk_index, 0);
+        assert_eq!(chunks[1].status, "failed");
+    }
+
+    #[test]
+    fn recoverable_sessions_returns_active_only() {
+        let dir = tempfile::tempdir().expect("tempdir must be created");
+        let db_path = dir.path().join("recordings.db");
+        let db = Database::open(&db_path).expect("db open must work");
+
+        db.insert_recording_session("sess-a", "/tmp/sess-a")
+            .expect("session insert must work");
+
+        let sessions = db
+            .list_recoverable_sessions()
+            .expect("list sessions must work");
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "sess-a");
+        assert_eq!(sessions[0].status, "active");
     }
 }
