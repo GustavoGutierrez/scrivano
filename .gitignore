@@ -36,6 +36,5 @@ scrivano-debug.log
 *.prompt.md
 .cargo/
 
-.atl/*
 # Local Pi runtime state
 .atl/

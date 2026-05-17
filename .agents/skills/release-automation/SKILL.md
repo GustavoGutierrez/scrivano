@@ -1,276 +1,104 @@
 ---
 name: release-automation
-description: Automatizar el flujo de trabajo de release para Scrivano, incluyendo detección automática de versión usando Semantic Versioning, operaciones git, creación de tags y publicación de releases.
+description: Automatizar releases de Scrivano con semver, notas basadas en cambios reales, validación y publicación segura.
 ---
 
-# Release Automation Skill
-
-## Purpose
-Automatizar el flujo de trabajo de release para Scrivano, incluyendo detección automática de versión usando Semantic Versioning, operaciones git, creación de tags y publicación de releases.
+# Release Automation Skill (Scrivano)
 
 ## Trigger
-- Usuario dice "create release", "make release", "nueva versión", "tag version"
-- Usuario pregunta "¿qué versión释放?" o "siguiente release"
-- Preparando cambios para release
 
----
+Usar cuando el usuario pida: `release`, `new version`, `publish release`, `tag release`, `nueva versión`.
 
-## Detección Automática de Versión (Semantic Versioning)
+## Non-negotiable gates
 
-### Como determinar el tipo de bump:
+1. **Cargar y ejecutar** `.agents/skills/security-release-gate/SKILL.md` antes de push/tag/release.
+2. Validar baseline:
+   ```bash
+   cargo fmt --check
+   cargo clippy --all-targets --all-features
+   cargo test
+   ```
+3. No continuar si no hay commits desde el último tag.
 
-#### 1. Análisis de commits desde el último tag
+## Workflow
+
+### 1) Detectar versión objetivo (semver)
+
 ```bash
-# Obtener commits desde el último tag
 git fetch --tags
 LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-COMMITS=$(git log ${LAST_TAG}..HEAD --oneline)
+CURRENT=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
 ```
 
-#### 2. Conventional Commits (auto-detectar)
-| Prefijo | Tipo de cambio | Bump |
-|---------|----------------|------|
-| `feat:` | Nueva funcionalidad | **MINOR** |
-| `fix:` | Bug fix | **PATCH** |
-| `chore:` | Mantenimiento | PATCH |
-| `docs:` | Documentación | PATCH |
-| `refactor:` | Refactorización | PATCH |
-| `perf:` | Performance | PATCH |
-| `test:` | Tests | PATCH |
-| `BREAKING CHANGE:` | Cambio romper | **MAJOR** |
-| `feat(breaking):` | Feature rompe | **MAJOR** |
+Regla:
+- `BREAKING CHANGE` o `type!:` -> MAJOR
+- `feat:` -> MINOR
+- resto -> PATCH
 
-#### 3. Detectar Breaking Changes
+### 2) Construir release notes DESDE cambios reales
+
+Fuentes obligatorias:
+- `git log ${LAST_TAG}..HEAD`
+- `git diff --stat ${LAST_TAG}..HEAD`
+- (si aplica) PRs/commits mergeados
+
+Formato recomendado:
+- `## Summary`
+- `## User-visible changes`
+- `## Internal quality changes`
+- `## Validation`
+- `## Install / Update notes`
+
+**Prohibido**: placeholders genéricos tipo “auto-generated changes” sin listar cambios reales.
+
+### 3) Evitar errores de quoting en notas
+
+No armar notas largas inline con quoting frágil. Usar archivo temporal:
+
 ```bash
-# Buscar BREAKING CHANGE en commits
-echo "$COMMITS" | grep -i "BREAKING CHANGE\|breaking change\|breaking-change"
-
-# Buscar commits con ! después del tipo
-echo "$COMMITS" | grep -E "^[a-z]+!:"
-```
-
-#### 4. Lógica de versión automática
-```
-SI hay "BREAKING CHANGE" → MAJOR (X.0.0)
-SINO SI hay feat: (sin breaking) → MINOR (x.Y.0)
-SINO → PATCH (x.y.Z)
-```
-
----
-
-## Flujo de Trabajo Completo
-
-### 1. Pre-flight Checklist
-```bash
-# Validar que todo esté listo
-cargo fmt --check        # ✅
-cargo clippy --all-targets --all-features  # ✅ warnings=0
-cargo test               # ✅ tests pass
-```
-
-### 2. Análisis Automático de Versión
-```bash
-# Paso 1: Leer versión actual
-CURRENT=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-# Ejemplo: CURRENT = "0.1.0"
-
-# Paso 2: Analizar commits
-git fetch --tags
-LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || "v0.0.0")
-COMMITS=$(git log ${LAST_TAG}..HEAD --oneline 2>/dev/null | wc -l)
-
-if [ "$COMMITS" -eq 0 ]; then
-  echo "No hay commits desde el último tag"
-  exit 1
-fi
-
-# Paso 3: Detectar tipo de cambio
-HAS_BREAKING=$(git log ${LAST_TAG}..HEAD --oneline | grep -iE "BREAKING CHANGE|!:" || true)
-HAS_FEAT=$(git log ${LAST_TAG}..HEAD --oneline | grep -E "^feat:" || true)
-
-if [ -n "$HAS_BREAKING" ]; then
-  BUMP_TYPE="MAJOR"
-elif [ -n "$HAS_FEAT" ]; then
-  BUMP_TYPE="MINOR"
-else
-  BUMP_TYPE="PATCH"
-fi
-```
-
-### 3. Calcular siguiente versión
-```bash
-# Extraer major.minor.patch
-MAJOR=$(echo $CURRENT | cut -d. -f1)
-MINOR=$(echo $CURRENT | cut -d. -f2)
-PATCH=$(echo $CURRENT | cut -d. -f3)
-
-case $BUMP_TYPE in
-  MAJOR) NEW_VERSION="$((MAJOR+1)).0.0" ;;
-  MINOR) NEW_VERSION="$MAJOR.$((MINOR+1)).0" ;;
-  PATCH) NEW_VERSION="$MAJOR.$MINOR.$((PATCH+1))" ;;
-esac
-```
-
-### 4. Git Operations
-```bash
-# Actualizar versión en Cargo.toml
-sed -i "s/version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" Cargo.toml
-
-# Commit de release
-git add Cargo.toml
-git commit -m "Release v$NEW_VERSION"
-
-# Crear tag anotado
-git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION
-
-Changes:
-- Type: $BUMP_TYPE
-- Commits since last release: $COMMITS"
-
-# Push
-git push origin main
-git push origin "v$NEW_VERSION"
-```
-
-### 5. Crear Release en GitHub
-```bash
-# Generar notas de release automáticamente
-RELEASE_NOTES=$(cat <<EOF
-## Scrivano v$NEW_VERSION
-
-### Requisitos Previos
-
-Antes de ejecutar Scrivano, necesitas descargar un modelo Whisper:
-
-\`\`\`bash
-# Crear directorio de modelos
-mkdir -p models
-
-# Descargar modelo tiny (rápido, 75MB)
-curl -L -o models/ggml-tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
-
-# O descargar modelo small (mejor calidad, 466MB)
-# curl -L -o models/ggml-small.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
-\`\`\`
-
-### What's New
-
-#### Breaking Changes
-$(git log ${LAST_TAG}..HEAD --oneline | grep -iE "BREAKING CHANGE|!:" || echo "None")
-
-#### New Features
-$(git log ${LAST_TAG}..HEAD --oneline | grep "^feat:" || echo "None")
-
-#### Bug Fixes
-$(git log ${LAST_TAG}..HEAD --oneline | grep "^fix:" || echo "None")
-
-#### Other Changes
-$(git log ${LAST_TAG}..HEAD --oneline | grep -vE "^feat:|^fix:|^BREAKING" || echo "None")
-
-### Instalación
-
-#### Linux x86_64
-\`\`\`bash
-wget https://github.com/GustavoGutierrez/scrivano/releases/download/v$NEW_VERSION/scrivano-linux-x86_64
-chmod +x scrivano-linux-x86_64
-./scrivano-linux-x86_64
-\`\`\`
-
-#### macOS ARM64
-\`\`\`bash
-wget https://github.com/GustavoGutierrez/scrivano/releases/download/v$NEW_VERSION/scrivano-macos-arm64
-chmod +x scrivano-macos-arm64
-./scrivano-macos-arm64
-\`\`\`
-
----
-*Auto-generated by Release Automation Skill*
+cat > /tmp/scrivano-release-notes.md <<'EOF'
+## Summary
+...
 EOF
-)
-
-gh release create "v$NEW_VERSION" \
-  --title "Scrivano v$NEW_VERSION" \
-  --notes "$RELEASE_NOTES" \
-  --draft false
 ```
 
----
+### 4) Version bump + tag
 
-## Comandos Disponibles
+Actualizar al menos:
+- `Cargo.toml` (`version`)
+- `snap/snapcraft.yaml` (`version`) si la release incluye snap
 
-### `release:detect`
-Detectar automáticamente qué tipo de versión corresponde:
-- Analiza commits desde último tag
-- Muestra: MAJOR / MINOR / PATCH
-- Explica por qué
-
-### `release:auto`
-Release automático (detecta tipo de bump):
-- Analiza commits
-- Calcula siguiente versión
-- Crea commit y tag
-- Push y crea release en GitHub
-
-### `release:patch`
-Release patch (bug fixes): `0.1.0` → `0.1.1`
-
-### `release:minor`
-Release minor (nuevas features): `0.1.0` → `0.2.0`
-
-### `release:major`
-Release major (breaking changes): `0.1.0` → `1.0.0`
-
-### `release:create X.Y.Z`
-Crear release con versión específica
-
-### `release:dry-run`
-Simular release sin hacer cambios:
-- Muestra qué versión sarebbe
-- Muestra qué commits se incluirían
-- Sin hacer push
-
----
-
-## Ejemplos de Uso
-
-```
-Usuario: "¿Qué tipo de release necesitamos?"
-→ Ejecutar `release:detect`
-→ Muestra: "MINOR - 2 features detectadas desde v0.1.0"
-
-Usuario: "Haz el release"
-→ Ejecutar `release:auto`
-→ Auto-detecta tipo, calcula versión, crea release
-
-Usuario: "Quiero solo bug fixes"
-→ Ejecutar `release:patch`
-→Fuerza bump patch aunque haya features
+Luego:
+```bash
+git add Cargo.toml snap/snapcraft.yaml
+git commit -m "release: vX.Y.Z"
+git tag -a "vX.Y.Z" -m "Release vX.Y.Z"
 ```
 
----
+### 5) Publicar GitHub release
 
-## Best Practices
+Camino principal:
+```bash
+gh release create "vX.Y.Z" --title "Scrivano vX.Y.Z" --notes-file /tmp/scrivano-release-notes.md
+```
 
-1. **Siempre desde main** - Asegúrate de estar en main actualizado
-2. **Espera CI** - Espera a que los workflows de GitHub Actions terminen
-3. **Tags anotados** - Usa tags anotados, no lightweight
-4. **CHANGELOG** - Actualiza CHANGELOG.md antes del release
-5. **Testing** - Prueba el binario compilado antes de anunciar
+Fallback seguro (si faltan flags o edición compleja):
+```bash
+gh api repos/:owner/:repo/releases/tags/vX.Y.Z --jq '.id'
+gh api repos/:owner/:repo/releases/<id> -X PATCH -f body@/tmp/scrivano-release-notes.md
+```
 
----
+## Stop conditions
 
-## Requisitos
+DETENER release si pasa cualquiera de estas:
+- Security gate marca findings **critical** sin resolver.
+- `fmt/clippy/test` fallan.
+- Mismatch de versión entre `Cargo.toml`, tag o release target.
+- Release notes no reflejan cambios reales desde `LAST_TAG`.
 
-- GitHub CLI (`gh`) instalado y autenticado: `gh auth login`
-- Acceso push al repositorio
-- Branch main actualizado
--git configurado con remote
+## Output expected to user
 
----
-
-## Notas Técnicas
-
-- **Formato de versión**: MAJOR.MINOR.PATCH (semver.org)
-- **Conventional Commits**: https://www.conventionalcommits.org/
-- **GH CLI**: https://cli.github.com/
-- **El workflow CI** en `.github/workflows/build-release.yml` compila automáticamente
+- Tipo de bump detectado + por qué.
+- Rango incluido (`LAST_TAG..HEAD`).
+- Release notes finales (resumen breve + archivo fuente).
+- Estado de validaciones y security gate.

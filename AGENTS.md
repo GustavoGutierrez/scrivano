@@ -368,6 +368,14 @@ cargo test
 
 Fix any warnings or test failures before committing.
 
+### Security Gate Before Publication
+
+Before any `push` to `main`, GitHub release, or Snap publication, run the project security gate skill:
+
+- `.agents/skills/security-release-gate/SKILL.md`
+
+This gate is allowed to **block publication** on critical findings, version mismatches, or artifact provenance problems.
+
 ---
 
 ## Project Skills
@@ -378,6 +386,7 @@ This project includes specialized skills for common workflows:
 |-------|--------|-------------|
 | `release-automation` | "create release", "make release", "nueva versión", "tag version" | Automate version bumping, git tags, and GitHub releases |
 | `snap-publish` | "publish snap", "snap store", "snapcraft upload" | Build and publish Scrivano to the Snap Store |
+| `security-release-gate` | "push main", "release", "publish", "snap upload", "tag release" | Mandatory security gate for publication workflows; blocks on critical findings |
 | `prp-writer` | " PRP", "product requirements", "create PRP" | Generate Product Requirements Prompts for new features |
 | `rust-engineer` | Rust development, ownership/borrowing, async/tokio | Idiomatic Rust patterns, memory safety, async applications |
 | `ui-redesign-scrivano` | "rediseñar UI", "implementar diseño", "componentes visuales", "tema nebula", "crear componente", "nueva funcionalidad UI", "modificar interfaz" | Implements and enforces the Nebula Dark design system for ALL UI work — new features, modifications, and visual fixes |

@@ -1,109 +1,86 @@
 ---
 name: snap-publish
-description: Publish Scrivano snap package to Ubuntu Snap Store.
+description: Publicar Scrivano en Snap Store verificando build fresca, versión embebida correcta y seguridad antes de subir.
 ---
 
-# Snap Publish Skill
+# Snap Publish Skill (Scrivano)
 
-## Purpose
-Publish Scrivano snap package to Ubuntu Snap Store.
+## Trigger
 
-## Prerequisites
-- snapcraft installed (`sudo snap install snapcraft --classic`)
-- Logged in to Snap Store (`snapcraft login`)
-- Registered snap name (`snapcraft register scrivano`)
+Usar cuando el usuario pida: `publish snap`, `snap release`, `subir snap`, `publicar en store`.
+
+## Mandatory preconditions
+
+1. Ejecutar `.agents/skills/security-release-gate/SKILL.md` antes de upload.
+2. Estar en branch/commit correcto de release.
+3. Tener `snapcraft login` vigente.
+
+## Authoritative payload path
+
+El binario que viaja al snap se toma de:
+
+- `snap/dist-bin/scrivano`  ← **path autoritativo para empaquetado**
 
 ## Workflow
 
-### 1. Prepare binary
-Build or download the Linux x86_64 binary:
-- From local: `cargo build --release`
-- From GitHub Actions artifacts: download `scrivano-linux-x86_64`
+### 1) Build fresca del binario release
 
-### 2. Prepare icons (already in repo)
-Icons are located in `snap/gui/`:
-```
-snap/gui/
-├── icon.png (512x512)          # Main icon for snap store
-├── favicon-256x256.png         # High-res
-├── favicon-128x128.png         # App grid
-├── favicon-64x64.png           # System tray
-├── favicon-48x48.png           # Alt size
-├── favicon-32x32.png           # Small
-└── favicon-16x16.png           # Tiny
-```
-These are already configured in `snap/snapcraft.yaml`.
-
-### 3. Create snap package
 ```bash
-# Copy binary to snap/bin/
-mkdir -p snap/bin
-cp /path/to/scrivano-linux-x86_64 snap/bin/scrivano
-chmod +x snap/bin/scrivano
+cargo build --release
+```
 
-# Build snap
+No usar binarios viejos ni descargados sin trazabilidad.
+
+### 2) Copiar payload correcto al snap
+
+```bash
+cp target/release/scrivano snap/dist-bin/scrivano
+chmod +x snap/dist-bin/scrivano
+```
+
+### 3) Verificar versión real del artefacto
+
+Comprobar consistencia entre:
+- `Cargo.toml` version
+- `snap/snapcraft.yaml` version
+- Binario compilado (`target/release/scrivano --version`, si está soportado)
+- Fuente de versión de About (`env!("CARGO_PKG_VERSION")` en `src/ui/about.rs`)
+
+Si no hay forma confiable de extraer versión runtime del binario, **detener** y corregir antes de publicar.
+
+### 4) Empaquetar snap
+
+```bash
 cd snap
 snapcraft clean
-snapcraft
-
-# Or pack directly
 snapcraft pack
 ```
 
-### 4. Upload to Snap Store
-```bash
-# Upload to stable channel
-snapcraft upload --release=stable scrivano_1.0.2_amd64.snap
+### 5) Verificación previa a upload
 
-# Or test in candidate first
-snapcraft upload --release=candidate scrivano_1.0.2_amd64.snap
+- Confirmar nombre/versión esperada del `.snap` generado.
+- Verificar que no se alteró confinement esperado (`strict`) salvo decisión explícita.
+- Revisar que el binario dentro del payload corresponde al build fresco del paso 1.
+
+### 6) Upload por canales
+
+Publicar en todos los canales acordados explícitamente (ejemplo: `candidate` y luego `stable`):
+
+```bash
+snapcraft upload --release=candidate <archivo.snap>
+snapcraft upload --release=stable <archivo.snap>
 ```
 
-### 5. Publish and track
-```bash
-# View published snap
-snapcraft list-revisions scrivano
+## Stop conditions
 
-# Track metrics
-snapcraft metrics scrivano
-```
+DETENER publicación si:
+- Security gate reporta findings **critical**.
+- Falla baseline (`fmt/clippy/test`).
+- Mismatch de versión (Cargo/Snap/binario/About).
+- `confinement` cambió a `classic` sin aprobación explícita.
+- Binario de `snap/dist-bin/scrivano` no viene de build release fresca.
 
-## Snap Metadata
+## Notes
 
-| Field | Value |
-|-------|-------|
-| Name | scrivano |
-| Developer | Gustavo Gutiérrez |
-| License | MIT |
-| Homepage | https://github.com/GustavoGutierrez/scrivano |
-| Icon | gui/icon.png |
-
-## Plugs (Permissions)
-- audio-playback
-- network
-- network-client
-- home
-- removable-media
-
-## Release Process
-
-1. Update version in `snap/snapcraft.yaml` (already done: 1.0.2)
-2. Download Linux binary from GitHub Release
-3. Copy to snap/bin/scrivano
-4. Run `snapcraft pack`
-5. Upload with `snapcraft upload --release=stable`
-
-## Troubleshooting
-
-### Icon not showing
-- Ensure icon.png is 512x512 minimum
-- Verify icon path in snapcraft.yaml: `icon: gui/icon.png`
-- Use `snapcraft audit` to check for issues
-
-### Permission denied
-- Ensure binary is executable: `chmod +x snap/bin/scrivano`
-- confinement: classic allows most operations
-
-### Build fails
-- Clean build: `snapcraft clean`
-- Use LXD container: `snapcraft pack --use-lxd`
+- `strict` confinement es más seguro que `classic`; no relajar sin necesidad real y revisión.
+- Mantener trazabilidad del artefacto empaquetado evita publicar binarios incorrectos.
