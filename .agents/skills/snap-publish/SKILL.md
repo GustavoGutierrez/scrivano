@@ -1,3 +1,8 @@
+---
+name: snap-publish
+description: Publish Scrivano snap package to Ubuntu Snap Store.
+---
+
 # Snap Publish Skill
 
 ## Purpose

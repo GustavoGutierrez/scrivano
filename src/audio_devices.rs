@@ -237,6 +237,7 @@ pub fn get_default_output_device() -> Option<AudioDevice> {
 /// 2. `$SNAP/models` (bundled models inside snap).
 /// 3. `models/` relative to the current working directory (dev/local mode).
 /// 4. `models/` next to the running executable (installed mode, e.g. /opt/Scrivano/models/).
+///
 /// Returns the first directory that exists and contains at least one `.bin` file.
 fn find_models_dir() -> Option<std::path::PathBuf> {
     let candidates: Vec<std::path::PathBuf> = {

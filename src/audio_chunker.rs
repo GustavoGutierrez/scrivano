@@ -69,19 +69,19 @@ impl AudioChunker {
             sample_format: SampleFormat::Int,
         };
 
-        let mut writer = WavWriter::create(&path, spec)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
+        let mut writer =
+            WavWriter::create(&path, spec).map_err(|err| std::io::Error::other(err.to_string()))?;
 
         for sample in samples {
             let s = (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
             writer
                 .write_sample(s)
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
+                .map_err(|err| std::io::Error::other(err.to_string()))?;
         }
 
         writer
             .finalize()
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string()))?;
+            .map_err(|err| std::io::Error::other(err.to_string()))?;
 
         let start = self.session_cursor;
         let end = start + samples.len() as u64;

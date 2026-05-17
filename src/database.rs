@@ -21,6 +21,18 @@ pub struct RecordingEntry {
     pub has_summaries: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct NewRecording<'a> {
+    pub filename: &'a str,
+    pub filepath: &'a str,
+    pub created_at: &'a str,
+    pub duration_secs: f64,
+    pub ollama_used: bool,
+    pub ollama_model: Option<&'a str>,
+    pub title: Option<&'a str>,
+    pub tags: Option<&'a str>,
+}
+
 impl RecordingEntry {
     pub fn duration_display(&self) -> String {
         let total = self.duration_secs as u64;
@@ -318,29 +330,19 @@ impl Database {
         Ok(())
     }
 
-    pub fn insert_recording(
-        &self,
-        filename: &str,
-        filepath: &str,
-        created_at: &str,
-        duration_secs: f64,
-        ollama_used: bool,
-        ollama_model: Option<&str>,
-        title: Option<&str>,
-        tags: Option<&str>,
-    ) -> Result<i64> {
+    pub fn insert_recording(&self, record: NewRecording<'_>) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO recordings (filename, filepath, created_at, duration_secs, ollama_used, ollama_model, title, tags)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
-                filename,
-                filepath,
-                created_at,
-                duration_secs,
-                ollama_used as i64,
-                ollama_model,
-                title,
-                tags,
+                record.filename,
+                record.filepath,
+                record.created_at,
+                record.duration_secs,
+                record.ollama_used as i64,
+                record.ollama_model,
+                record.title,
+                record.tags,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())

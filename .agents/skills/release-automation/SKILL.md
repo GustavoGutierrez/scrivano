@@ -1,3 +1,8 @@
+---
+name: release-automation
+description: Automatizar el flujo de trabajo de release para Scrivano, incluyendo detección automática de versión usando Semantic Versioning, operaciones git, creación de tags y publicación de releases.
+---
+
 # Release Automation Skill
 
 ## Purpose

@@ -1,0 +1,46 @@
+name: ui-redesign-scrivano
+kind: skill
+description: Implements and enforces the Nebula Dark design system for ALL UI work in
+  Scrivano. Provides component templates, design constants, custom painting
+  patterns, and enforcement rules for ongoing UI development.
+preconditions:
+- check: project_initialized
+  description: Scrivano project is set up
+  required: true
+effects:
+- applies_design_system
+- creates_ui_components
+- updates_theme
+domains: &id001
+- frontend
+- design
+- ui
+- ux
+cost: medium
+latency: low
+risk_level: low
+side_effects:
+- modifies_files
+- creates_artifacts
+idempotent: false
+success_signal: UI redesign components applied successfully
+failure_signals:
+- Prerequisites not met
+- Design constants conflict with existing theme
+compatibility:
+  requires: []
+  conflicts_with: []
+  composes_with: []
+  enables: []
+observability:
+  logs:
+  - Applying ui-redesign-scrivano...
+  - ui-redesign-scrivano completed
+  metrics:
+  - execution_time_ms
+  - success_rate
+metadata:
+  version: 1.0.0
+  created_at: '2026-05-16'
+  tags: *id001
+  examples: []

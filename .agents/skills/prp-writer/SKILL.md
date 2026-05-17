@@ -1,5 +1,5 @@
 ---
-name: PRP Generator
+name: prp-writer
 description: Guides creation of Product Requirements Prompts (PRPs) - comprehensive requirement documents that serve as the foundation for AI-assisted development
 version: 1.0.0
 category: requirements

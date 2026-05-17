@@ -130,6 +130,23 @@ devforge_text_uuid(kind: "uuid4")
 
 ---
 
+## Design System Rules — MANDATORY
+
+**CRITICAL**: All UI changes MUST comply with `.agents/rules/design-system.md`. This is an **absolute constraint** — no agent, subagent, or human may override these rules without documented PRP approval.
+
+Before ANY UI change:
+1. Read `.agents/rules/design-system.md`
+2. Use constants from `src/ui/theme.rs` (never hardcode colors, fonts, or spacing)
+3. Use helpers from `src/ui/components.rs` (never duplicate layout code)
+4. Verify contrast ≥ 4.5:1 for body text (WCAG AA)
+5. Font sizes never below 12px
+
+**Consequence of violation**: UI changes that don't comply will be rejected in review. The design system is the single source of truth for all visual decisions.
+
+See `.agents/skills/ui-redesign-scrivano/SKILL.md` for the implementation workflow.
+
+---
+
 ## Code Style Guidelines
 
 ### Formatting
@@ -361,7 +378,8 @@ This project includes specialized skills for common workflows:
 |-------|--------|-------------|
 | `release-automation` | "create release", "make release", "nueva versión", "tag version" | Automate version bumping, git tags, and GitHub releases |
 | `snap-publish` | "publish snap", "snap store", "snapcraft upload" | Build and publish Scrivano to the Snap Store |
-| `prp-generator` | " PRP", "product requirements", "create PRP" | Generate Product Requirements Prompts for new features |
+| `prp-writer` | " PRP", "product requirements", "create PRP" | Generate Product Requirements Prompts for new features |
 | `rust-engineer` | Rust development, ownership/borrowing, async/tokio | Idiomatic Rust patterns, memory safety, async applications |
+| `ui-redesign-scrivano` | "rediseñar UI", "implementar diseño", "componentes visuales", "tema nebula", "crear componente", "nueva funcionalidad UI", "modificar interfaz" | Implements and enforces the Nebula Dark design system for ALL UI work — new features, modifications, and visual fixes |
 
 **Loading skills**: Use the `skill` tool with the skill name when a matching task is identified.

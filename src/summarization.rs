@@ -27,7 +27,7 @@ impl SummaryTemplate {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_template_key(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "executive" => Some(SummaryTemplate::Executive),
             "complete" => Some(SummaryTemplate::Complete),
