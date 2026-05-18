@@ -10,6 +10,7 @@ use super::App;
 impl App {
     pub(super) fn show_recording_tab(&mut self, ui: &mut egui::Ui) {
         let is_recording = self.recording.load(Ordering::SeqCst);
+        let is_paused = self.recording_paused.load(Ordering::SeqCst);
         let is_transcribing = self.is_transcribing.load(Ordering::SeqCst);
         let is_improving = self.is_improving.load(Ordering::SeqCst);
         let is_busy = is_transcribing || is_improving;
@@ -90,6 +91,43 @@ impl App {
                         self.is_stopping = true;
                         self.stop_requested_time = Some(std::time::Instant::now());
                     }
+
+                    ui.add_space(SPACING_TIGHT);
+                    ui.horizontal(|ui| {
+                        let secondary_btn_width = (MAIN_ACTION_BUTTON_WIDTH - SPACING_TIGHT) / 2.0;
+
+                        let pause_label = if is_paused {
+                            format!("{}  Reanudar", super::ICON_PLAY)
+                        } else {
+                            format!("{}  Pausar", super::ICON_PAUSE)
+                        };
+
+                        let pause_btn = components::accent_button(
+                            pause_label,
+                            ACCENT_AMBER,
+                            ACCENT_AMBER,
+                            egui::vec2(secondary_btn_width, MAIN_ACTION_BUTTON_HEIGHT),
+                        );
+
+                        if ui.add(pause_btn).clicked() {
+                            if is_paused {
+                                self.resume_recording();
+                            } else {
+                                self.pause_recording();
+                            }
+                        }
+
+                        let cancel_btn = components::accent_button(
+                            format!("{}  Cancelar", super::ICON_DELETE),
+                            ACCENT_CRIMSON,
+                            ACCENT_CRIMSON_HOVER,
+                            egui::vec2(secondary_btn_width, MAIN_ACTION_BUTTON_HEIGHT),
+                        );
+
+                        if ui.add(cancel_btn).clicked() {
+                            self.cancel_recording();
+                        }
+                    });
                 } else {
                     let btn = components::accent_button(
                         format!("{}  Iniciar grabación", super::ICON_RECORD),
@@ -115,15 +153,24 @@ impl App {
                     let secs = (elapsed % 60.0) as u32;
 
                     ui.horizontal(|ui| {
-                        let t = ui.input(|i| i.time);
-                        let blink = ((t * 2.5).sin() * 0.5 + 0.5) as f32;
-                        let dot = ACCENT_CRIMSON.gamma_multiply(0.35 + (0.65 * blink));
-                        ui.label(
-                            RichText::new(format!("{} GRABANDO", super::ICON_RECORD))
-                                .size(FONT_CAPTION)
-                                .color(dot)
-                                .strong(),
-                        );
+                        if is_paused {
+                            ui.label(
+                                RichText::new(format!("{} PAUSADO", super::ICON_PAUSE))
+                                    .size(FONT_CAPTION)
+                                    .color(ACCENT_AMBER)
+                                    .strong(),
+                            );
+                        } else {
+                            let t = ui.input(|i| i.time);
+                            let blink = ((t * 2.5).sin() * 0.5 + 0.5) as f32;
+                            let dot = ACCENT_CRIMSON.gamma_multiply(0.35 + (0.65 * blink));
+                            ui.label(
+                                RichText::new(format!("{} GRABANDO", super::ICON_RECORD))
+                                    .size(FONT_CAPTION)
+                                    .color(dot)
+                                    .strong(),
+                            );
+                        }
                         ui.add_space(SPACING_ELEMENT + SPACING_MICRO);
                         ui.label(
                             RichText::new(format!("{:02}:{:02}", mins, secs))
@@ -378,31 +425,48 @@ impl App {
                                             |ui| {
                                                 #[cfg(feature = "audio-playback")]
                                                 {
-                                                    let play_btn = egui::Button::new(
-                                                        RichText::new(super::ICON_PLAY)
-                                                            .size(FONT_CAPTION)
-                                                            .color(ACCENT_EMERALD),
-                                                    )
-                                                    .fill(Color32::TRANSPARENT)
-                                                    .stroke(Stroke::new(1.0, ACCENT_EMERALD))
-                                                    .rounding(ROUNDING_SMALL)
-                                                    .min_size(egui::vec2(
-                                                        ICON_BUTTON_SIZE,
-                                                        ICON_BUTTON_SIZE,
-                                                    ));
+                                                    // Evitar duplicación visual: cuando la fila está expandida
+                                                    // ya existe el reproductor interno completo.
+                                                    if !is_expanded {
+                                                        let player = self.audio_player.as_ref();
+                                                        let is_playing = player
+                                                            .map(|p| p.is_playing())
+                                                            .unwrap_or(false);
+                                                        let is_paused = player
+                                                            .map(|p| p.is_paused())
+                                                            .unwrap_or(false);
+                                                        let is_current_item = self
+                                                            .current_playing_id
+                                                            == Some(entry.id);
 
-                                                    if ui.add(play_btn).clicked() {
-                                                        let wav_path =
-                                                            entry.filepath.replace(".txt", ".wav");
-                                                        if std::path::Path::new(&wav_path).exists()
+                                                        let (icon, hover_text) =
+                                                            if is_current_item && is_playing {
+                                                                (super::ICON_PAUSE, "Pausar")
+                                                            } else if is_current_item && is_paused {
+                                                                (super::ICON_PLAY, "Reanudar")
+                                                            } else {
+                                                                (super::ICON_PLAY, "Reproducir")
+                                                            };
+
+                                                        let play_btn = egui::Button::new(
+                                                            RichText::new(icon)
+                                                                .size(FONT_CAPTION)
+                                                                .color(ACCENT_EMERALD),
+                                                        )
+                                                        .fill(Color32::TRANSPARENT)
+                                                        .stroke(Stroke::new(1.0, ACCENT_EMERALD))
+                                                        .rounding(ROUNDING_SMALL)
+                                                        .min_size(egui::vec2(
+                                                            ICON_BUTTON_SIZE,
+                                                            ICON_BUTTON_SIZE,
+                                                        ));
+
+                                                        if ui
+                                                            .add(play_btn)
+                                                            .on_hover_text(hover_text)
+                                                            .clicked()
                                                         {
-                                                            if let Some(ref mut player) =
-                                                                self.audio_player
-                                                            {
-                                                                let _ = player.play(&wav_path);
-                                                                self.current_playing_id =
-                                                                    Some(entry.id);
-                                                            }
+                                                            self.toggle_playback(&entry);
                                                         }
                                                     }
                                                 }

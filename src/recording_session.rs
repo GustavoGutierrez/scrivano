@@ -59,6 +59,14 @@ impl RecordingSession {
         Ok(())
     }
 
+    pub fn cancel(&self) -> std::io::Result<()> {
+        match fs::remove_dir_all(&self.session_dir) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
     pub fn recover(base_dir: &Path, session_id: &str) -> std::io::Result<Vec<ManifestEntry>> {
         let manifest_path = base_dir.join(session_id).join("manifest.jsonl");
         let file = fs::File::open(manifest_path)?;
@@ -141,5 +149,19 @@ mod tests {
             RecordingSession::recover(dir.path(), &session.session_id).expect("must recover");
         assert_eq!(recovered.len(), 1);
         assert_eq!(recovered[0].chunk_index, 7);
+    }
+
+    #[test]
+    fn cancel_removes_session_directory() {
+        let dir = tempfile::tempdir().expect("tempdir must be created");
+        let session = RecordingSession::open(dir.path(), "cancel-seed").expect("session must open");
+
+        let session_path = session.session_dir.clone();
+        assert!(session_path.exists());
+
+        session
+            .cancel()
+            .expect("cancel must remove session directory");
+        assert!(!session_path.exists());
     }
 }

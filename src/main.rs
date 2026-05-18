@@ -22,6 +22,14 @@ fn create_tray_icon() -> tray_icon::TrayIcon {
 }
 
 fn main() -> eframe::Result<()> {
+    if std::env::args()
+        .skip(1)
+        .any(|arg| arg == "--version" || arg == "-V")
+    {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let settings = AppSettings::load();
     let model_path = settings.whisper_model.clone();
 

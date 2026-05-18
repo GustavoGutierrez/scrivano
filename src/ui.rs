@@ -5,6 +5,7 @@ use std::{
         atomic::{AtomicBool, AtomicI32, Ordering},
         Arc, Mutex,
     },
+    thread::JoinHandle,
     time::Duration,
 };
 
@@ -107,6 +108,7 @@ type PendingHighlights = Arc<Mutex<Vec<PendingHighlight>>>;
 
 pub struct App {
     pub recording: Arc<AtomicBool>,
+    recording_paused: Arc<AtomicBool>,
     pub audio_buffer: Arc<Mutex<Vec<f32>>>,
     pub waveform_buffer: Arc<Mutex<Vec<f32>>>,
     pub transcript: Arc<Mutex<String>>,
@@ -171,6 +173,7 @@ pub struct App {
     stop_requested_time: Option<std::time::Instant>, // when stop was requested
     chunk_ui_state: Arc<Mutex<ChunkUiState>>,
     chunk_pipeline: Option<Arc<Mutex<ChunkPipeline>>>,
+    recorder_thread: Option<JoinHandle<()>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -324,6 +327,7 @@ impl App {
         let initial = "Esperando grabación...".to_string();
         Self {
             recording: Arc::new(AtomicBool::new(false)),
+            recording_paused: Arc::new(AtomicBool::new(false)),
             audio_buffer: Arc::new(Mutex::new(Vec::new())),
             waveform_buffer: Arc::new(Mutex::new(Vec::new())),
             transcript: Arc::new(Mutex::new(initial.clone())),
@@ -375,6 +379,7 @@ impl App {
             stop_requested_time: None,
             chunk_ui_state: Arc::new(Mutex::new(ChunkUiState::default())),
             chunk_pipeline: None,
+            recorder_thread: None,
         }
     }
 
@@ -1576,11 +1581,18 @@ impl App {
     }
 
     fn start_recording(&mut self) {
+        if let Some(handle) = self.recorder_thread.take() {
+            let _ = handle.join();
+        }
+
         self.audio_buffer.lock().unwrap().clear();
         self.waveform_buffer.lock().unwrap().clear();
         self.waveform_buffer.lock().unwrap().clear();
         self.pending_highlights.lock().unwrap().clear();
         *self.chunk_ui_state.lock().unwrap() = ChunkUiState::default();
+        self.recording_paused.store(false, Ordering::SeqCst);
+        self.is_stopping = false;
+        self.stop_requested_time = None;
         self.transcript_edit = "Grabando...".to_string();
         *self.transcript.lock().unwrap() = "Grabando...".to_string();
         self.recording.store(true, Ordering::SeqCst);
@@ -1633,17 +1645,61 @@ impl App {
 
         eprintln!("[ui] Grabando desde: {:?}", source_name);
 
-        spawn_system_audio_recorder(
+        self.recorder_thread = Some(spawn_system_audio_recorder(
             self.recording.clone(),
+            self.recording_paused.clone(),
             self.audio_buffer.clone(),
             self.waveform_buffer.clone(),
             source_name,
             chunk_sink,
-        );
+        ));
+    }
+
+    fn pause_recording(&mut self) {
+        if self.recording.load(Ordering::SeqCst) {
+            self.recording_paused.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn resume_recording(&mut self) {
+        if self.recording.load(Ordering::SeqCst) {
+            self.recording_paused.store(false, Ordering::SeqCst);
+        }
+    }
+
+    fn cancel_recording(&mut self) {
+        self.recording.store(false, Ordering::SeqCst);
+        self.recording_paused.store(false, Ordering::SeqCst);
+        self.is_stopping = false;
+        self.stop_requested_time = None;
+
+        if let Some(handle) = self.recorder_thread.take() {
+            let _ = handle.join();
+        }
+
+        if let Some(pipeline) = self.chunk_pipeline.take() {
+            if let Ok(guard) = pipeline.lock() {
+                let _ = guard.session.cancel();
+            }
+        }
+
+        self.audio_buffer.lock().unwrap().clear();
+        self.waveform_buffer.lock().unwrap().clear();
+        self.pending_highlights.lock().unwrap().clear();
+        *self.chunk_ui_state.lock().unwrap() = ChunkUiState::default();
+        self.recording_start = None;
+        self.last_recording_duration = 0.0;
+        self.transcript_edit.clear();
+        *self.transcript.lock().unwrap() = String::new();
     }
 
     fn stop_and_transcribe(&mut self) {
         self.recording.store(false, Ordering::SeqCst);
+
+        if let Some(handle) = self.recorder_thread.take() {
+            let _ = handle.join();
+        }
+
         if let Some(pipeline) = self.chunk_pipeline.take() {
             if let Ok(guard) = pipeline.lock() {
                 let _ = guard.session.finalize();

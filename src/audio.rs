@@ -17,7 +17,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    thread,
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
@@ -55,7 +55,12 @@ fn process_resampled_batch(
     audio_buffer: &Arc<Mutex<Vec<f32>>>,
     waveform_buffer: &Arc<Mutex<Vec<f32>>>,
     chunk_sink: Option<&ChunkSink>,
+    paused: bool,
 ) {
+    if paused {
+        return;
+    }
+
     audio_buffer.lock().unwrap().extend_from_slice(float_16k);
 
     if let Some(sink) = chunk_sink {
@@ -96,6 +101,67 @@ fn should_fallback_to_default_source(
     is_explicit_source && captured_samples == 0 && elapsed >= Duration::from_secs(2)
 }
 
+fn should_attempt_stream_recover(state: pulse::stream::State) -> bool {
+    matches!(
+        state,
+        pulse::stream::State::Failed | pulse::stream::State::Terminated
+    )
+}
+
+fn consume_stream_frame(
+    stream: &mut Stream,
+    audio_buffer: &Arc<Mutex<Vec<f32>>>,
+    waveform_buffer: &Arc<Mutex<Vec<f32>>>,
+    chunk_sink: Option<&ChunkSink>,
+    paused_flag: &Arc<AtomicBool>,
+    captured_samples: &mut usize,
+) {
+    let peek = match stream.peek() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[audio] stream.peek() error: {}", e);
+            thread::sleep(Duration::from_millis(5));
+            return;
+        }
+    };
+
+    match peek {
+        PeekResult::Data(data) => {
+            let paused = paused_flag.load(Ordering::SeqCst);
+            let float_44k: Vec<f32> = data
+                .chunks_exact(4)
+                .map(|b| {
+                    let s = i32::from_le_bytes(b.try_into().unwrap());
+                    s as f32 / i32::MAX as f32
+                })
+                .collect();
+
+            stream.discard().ok();
+
+            if float_44k.is_empty() {
+                return;
+            }
+
+            let float_16k = resample_linear(&float_44k, CAPTURE_RATE, WHISPER_RATE);
+            *captured_samples += float_16k.len();
+            process_resampled_batch(
+                &float_16k,
+                &float_44k,
+                audio_buffer,
+                waveform_buffer,
+                chunk_sink,
+                paused,
+            );
+        }
+        PeekResult::Hole(_) => {
+            stream.discard().ok();
+        }
+        PeekResult::Empty => {
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+}
+
 // ── Resampler ────────────────────────────────────────────────────────────────
 
 /// Resample mono f32 from `src_rate` to `dst_rate` using linear interpolation.
@@ -129,11 +195,12 @@ pub fn resample_linear(input: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> 
 /// `waveform_buffer` for live display.
 pub fn spawn_system_audio_recorder(
     recording_flag: Arc<AtomicBool>,
+    paused_flag: Arc<AtomicBool>,
     audio_buffer: Arc<Mutex<Vec<f32>>>,
     waveform_buffer: Arc<Mutex<Vec<f32>>>,
     source_name: String,
     chunk_sink: Option<ChunkSink>,
-) {
+) -> JoinHandle<()> {
     thread::spawn(move || {
         // ── Build PulseAudio mainloop + context on this thread ──────────────
         let mut mainloop = match Mainloop::new() {
@@ -226,55 +293,33 @@ pub fn spawn_system_audio_recorder(
                 IterateResult::Success(_) => {}
             }
 
-            match stream.get_state() {
-                pulse::stream::State::Ready => {}
-                _ => continue,
-            }
-
-            let peek = match stream.peek() {
-                Ok(p) => p,
-                Err(e) => {
-                    eprintln!("[audio] stream.peek() error: {}", e);
-                    thread::sleep(Duration::from_millis(5));
-                    continue;
-                }
-            };
-
-            match peek {
-                PeekResult::Data(data) => {
-                    // Parse S32LE bytes → i32 → f32
-                    let float_44k: Vec<f32> = data
-                        .chunks_exact(4)
-                        .map(|b| {
-                            let s = i32::from_le_bytes(b.try_into().unwrap());
-                            s as f32 / i32::MAX as f32
-                        })
-                        .collect();
-
-                    stream.discard().ok();
-
-                    if float_44k.is_empty() {
-                        continue;
-                    }
-
-                    // Resample to 16 kHz for Whisper
-                    let float_16k = resample_linear(&float_44k, CAPTURE_RATE, WHISPER_RATE);
-                    captured_samples += float_16k.len();
-                    process_resampled_batch(
-                        &float_16k,
-                        &float_44k,
-                        &audio_buffer,
-                        &waveform_buffer,
-                        chunk_sink.as_ref(),
+            let stream_state = stream.get_state();
+            if stream_state != pulse::stream::State::Ready {
+                if should_attempt_stream_recover(stream_state) {
+                    eprintln!(
+                        "[audio] Stream state {:?}; attempting reconnect",
+                        stream_state
                     );
+                    if let Err(e) = stream.disconnect() {
+                        eprintln!("[audio] Stream disconnect failed during recover: {}", e);
+                    }
+                    if !connect_record_stream(&mut stream, source_for_record.as_deref()) {
+                        eprintln!("[audio] Recover reconnect failed");
+                        break;
+                    }
                 }
-                PeekResult::Hole(_) => {
-                    stream.discard().ok();
-                }
-                PeekResult::Empty => {
-                    thread::sleep(Duration::from_millis(2));
-                }
+                thread::sleep(Duration::from_millis(2));
+                continue;
             }
+
+            consume_stream_frame(
+                &mut stream,
+                &audio_buffer,
+                &waveform_buffer,
+                chunk_sink.as_ref(),
+                &paused_flag,
+                &mut captured_samples,
+            );
 
             if !fallback_to_default_attempted
                 && should_fallback_to_default_source(
@@ -305,8 +350,29 @@ pub fn spawn_system_audio_recorder(
             }
         }
 
+        // Best-effort tail flush to avoid dropping trailing buffered audio on stop.
+        for _ in 0..20 {
+            match mainloop.iterate(false) {
+                IterateResult::Err(_) | IterateResult::Quit(_) => break,
+                IterateResult::Success(_) => {}
+            }
+
+            if stream.get_state() != pulse::stream::State::Ready {
+                break;
+            }
+
+            consume_stream_frame(
+                &mut stream,
+                &audio_buffer,
+                &waveform_buffer,
+                chunk_sink.as_ref(),
+                &paused_flag,
+                &mut captured_samples,
+            );
+        }
+
         eprintln!("[audio] Recording thread stopped");
-    });
+    })
 }
 
 // ── Buffer helpers ────────────────────────────────────────────────────────────
@@ -450,6 +516,24 @@ mod tests {
     }
 
     #[test]
+    fn process_batch_skips_buffers_when_paused() {
+        let audio_buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
+        let waveform_buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
+
+        process_resampled_batch(
+            &[0.1, 0.2, 0.3],
+            &[0.4, 0.5],
+            &audio_buffer,
+            &waveform_buffer,
+            None,
+            true,
+        );
+
+        assert!(audio_buffer.lock().unwrap().is_empty());
+        assert!(waveform_buffer.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn fallback_to_default_when_no_data_from_explicit_source() {
         assert!(should_fallback_to_default_source(
             "alsa_input.usb-webcam.mono-fallback",
@@ -501,11 +585,24 @@ mod tests {
             &audio_buffer,
             &waveform_buffer,
             Some(&sink),
+            false,
         );
 
         assert_eq!(audio_buffer.lock().unwrap().as_slice(), whisper.as_slice());
         assert_eq!(waveform_buffer.lock().unwrap().len(), WAVE_WINDOW);
         assert_eq!(sink_calls.lock().unwrap().len(), 1);
         assert_eq!(sink_calls.lock().unwrap()[0].as_slice(), whisper.as_slice());
+    }
+
+    #[test]
+    fn stream_recover_only_for_terminal_states() {
+        assert!(should_attempt_stream_recover(pulse::stream::State::Failed));
+        assert!(should_attempt_stream_recover(
+            pulse::stream::State::Terminated
+        ));
+        assert!(!should_attempt_stream_recover(pulse::stream::State::Ready));
+        assert!(!should_attempt_stream_recover(
+            pulse::stream::State::Creating
+        ));
     }
 }

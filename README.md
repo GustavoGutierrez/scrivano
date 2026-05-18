@@ -33,6 +33,9 @@ Hoy está en una etapa madura: UI Nebula, historial persistente, exportación mu
 |---|---|
 | UI | ✅ Rediseño Nebula activo (sistema de diseño en `src/ui/theme.rs` + componentes reutilizables) |
 | Grabación/transcripción | ✅ Captura PulseAudio/PipeWire + Whisper local |
+| Flujo de stop | ✅ Detención robusta: countdown de UI + `join()` del thread + tail flush best-effort antes de transcribir |
+| Control de sesión en grabación | ✅ Pausar, reanudar y cancelar durante grabación (incluye limpieza/cancelación de sesión de chunks) |
+| Reproducción en historial | ✅ Toggle externo de play/pause/reanudar consistente por ítem (evita duplicación cuando la fila está expandida) |
 | Exportación | ✅ TXT, Markdown, JSON, SRT y WebVTT |
 | Historial | ✅ Persistencia SQLite + acciones desde UI |
 | Snap | ✅ Disponible en Snap Store (`strict confinement`) |
@@ -80,6 +83,16 @@ cargo build --release
 
 # Ejecutar binario
 ./target/release/scrivano
+
+# Versión runtime (para gates de publicación)
+./target/release/scrivano --version
+./target/release/scrivano -V
+```
+
+También funciona con `cargo run`:
+
+```bash
+cargo run -- --version
 ```
 
 ### Features opcionales
